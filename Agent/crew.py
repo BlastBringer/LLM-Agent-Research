@@ -1,12 +1,12 @@
 from crewai import Agent, LLM ,Crew,Process,Task
-from crewai_tools import SerperDevTool
+#from crewai_tools import SerperDevTool
 from crewai.project import CrewBase, agent , crew, task
 from typing import List
 import yaml
 
 agents_config = "config/agents.yaml"
 task_config = "config/tasks.yaml"
-with open(agents_config, "r") as file:
+with open(agents_config, "r", encoding="utf-8") as file:
     agents_yaml = yaml.safe_load(file)
 
 with open(task_config, "r") as file:
