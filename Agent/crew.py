@@ -9,13 +9,13 @@ task_config = "config/tasks.yaml"
 with open(agents_config, "r", encoding="utf-8") as file:
     agents_yaml = yaml.safe_load(file)
 
-with open(task_config, "r") as file:
+with open(task_config, "r", encoding="utf-8") as file:
     tasks_yaml = yaml.safe_load(file)
 
 llm = LLM(
     model="ollama/mistral:latest",
     base_url="http://localhost:11434",
-    stream=True,
+    stream=False,
 )
 
 
@@ -76,59 +76,59 @@ output_cleaner = Agent(
 parse_and_classify = Task(
     config=tasks_yaml['parse_and_classify_task'],
     agent=interpreter,
-    verbose=True
+    verbose=False
 )
 
 type_classifier = Task(
     config=tasks_yaml['classify_task_type'],
     agent=classifier,
-    verbose=True,
+    verbose=False,
     context=[parse_and_classify]
 )
 
 select_tool_task = Task(
     config=tasks_yaml['select_tool_task'],
     agent=tool_selector,
-    verbose=True,
+    verbose=False,
     context=[parse_and_classify]
 )
 execute_symbolic_task = Task(
     config=tasks_yaml['execute_symbolic_task'],
     agent=sympy_executor,
-    verbose=True,
+    verbose=False,
     context=[parse_and_classify, type_classifier, select_tool_task]
 )
 
 execute_numeric_computation = Task(
     config=tasks_yaml['execute_numeric_computation'],
     agent=numeric_executor,
-    verbose=True,
+    verbose=False,
     context=[select_tool_task]
 )
 search_math_knowledge = Task(
     config=tasks_yaml['search_math_knowledge'],
     agent=search_agent,
-    verbose=True,
+    verbose=False,
     context=[select_tool_task]
 )
 verify_result = Task(
     config=tasks_yaml['verify_result'],
     agent=verifier,
-    verbose=True,
+    verbose=False,
     context=[execute_numeric_computation,execute_symbolic_task,search_math_knowledge]
 )
 
 clean_output = Task(
     config=tasks_yaml['clean_output'],
     agent=output_cleaner,
-    verbose=True,
+    verbose=False,
     context=[verify_result]
 )
 
 aggregate_results_task = Task(
     config=tasks_yaml['aggregate_results_task'],
     agent=result_aggregator,
-    verbose=True,
+    verbose=False,
     context=[parse_and_classify, select_tool_task, type_classifier,execute_symbolic_task,execute_numeric_computation,search_math_knowledge,verify_result,clean_output]
 )
 
@@ -142,6 +142,6 @@ crew = Crew(
 
 
 
-result = crew.kickoff(inputs={"input":"Can you help me simplify this algebraic expression: (3x + 2x) - (x - 4)?"})
-print(result)
+result = crew.kickoff(inputs={"input":"Can you help me simplify this algebraic expression: (3x + 2x) + (3x - 4)?"})
+
 

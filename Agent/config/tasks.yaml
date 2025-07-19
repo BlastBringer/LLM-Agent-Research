@@ -1,159 +1,170 @@
 parse_and_classify_task:
   name: Parse and classify task
   description: >
-    Parse a raw math input provided by the user and determine:
-    1. The mathematical expression(s) or equation(s) present
-    2. The user's intent (e.g., classify, solve, explain)
-    3. The type of task (symbolic, numeric, or lookup)
+    Parse the user input and extract:
+      - operation: one of ["solve", "evaluate", "differentiate", "integrate", "simplify", "limit", "lookup"]
+      - expression: the full symbolic math expression as a string (do not restructure or convert to JSON AST)
+      - Optional: evaluate_at, bounds, context if present
 
-    Your job is to bridge natural language and formal math structure, enabling further processing by the correct tools or planners.
+    Rules:
+      1. If the input says "simplify", "reduce", "combine like terms" and contains no "=", then operation is "simplify".
+      2. If input contains "=", then it's a "solve" task unless stated otherwise.
+      3. Do not guess missing fields. Output must be minimal and accurate.
+      4. Do not break expression into tree or tokens — preserve input structure.
+
+    Input: plain-text question or expression
+    Output: structured JSON
+      - success: { "operation": "...", "expression": "..." }
+      - failure: { "error": "Unrecognized or incomplete task" }
   expected_output: >
-    A structured object (e.g., JSON) containing:
-    - extracted expression(s),
-    - identified intent,
-    - task type tag (one of: symbolic, numeric, lookup).
+    {
+      "operation": "simplify",
+      "expression": "(3x + 2x) - (x - 4)"
+    }
   agent: interpreter
+
 
 
 
 classify_task_type:
   name: Classify task type
   description: >
-    Based on the parsed math task, classify it into one of the following types:
-    1. Symbolic (e.g., algebra, simplification)
-    2. Numeric (e.g., calculation, solve-for-value)
-    3. Lookup (e.g., fetch a known constant or rule)
+    1. Determine task type from structured task input.
+    2. Return one of:
+       - "symbolic" → algebra, calculus, simplification
+       - "numeric" → tasks with bounds, units, decimals
+       - "lookup" → formulas, definitions, factual queries
+    3. Prefer "symbolic" if expression contains variables, algebraic operations, or unknowns.
+    4. Only default to "lookup" if the input is ambiguous and has no clear variables or math operations.
 
-    This helps in routing the task to the correct solver or tool.
+    Input: parsed task object  
   expected_output: >
-    A task object updated with a `task_type` field indicating its classification.
+    A string: "symbolic", "numeric", or "lookup"
   agent: type_classifier
 
-  
+
 select_tool_task:
   name: Select Tool Task
   description: >
-    Given a parsed and classified math task, select the most appropriate tool(s) needed
-    to process or solve the task. Consider:
-    1. The type of task (symbolic, numeric, lookup)
-    2. The user's intent (e.g., solve, explain, simplify)
-    3. Any plans or routing metadata passed in context
+    1. Assign each subtask to the correct executor based on task type:
+       - "symbolic" → sympy_tool
+       - "numeric" → numpy_tool
+       - "lookup" → search_tool
+    2. Maintain the order of subtasks.
+    3. Preserve subtask content exactly.
 
-    Your job is to act as the decision-making layer, determining which computational
-    tool(s) should be invoked next and returning the tool selection in a structured format.
+    Input:
+      - subtasks: list of parsed subtasks
+      - task_type: one of [symbolic, numeric, lookup]
   expected_output: >
-    A structured object (e.g., JSON) containing:
-    - selected_tool(s): a list of tool names or actions to be invoked
-    - justification: a short explanation of why the tool(s) were selected
+    List of tool assignments in the format:
+      - step: integer starting at 1
+      - tool: "SympyAgent", "NumericAgent", or "SearchAgent"
+      - task: original subtask JSON
   agent: tool_selector
-
-
-aggregate_results_task:
-  name: Aggregate Results
-  description: >
-    Collect and summarize the outputs from all previous agents in the pipeline. 
-    For each contributing agent, include:
-    - Agent Name
-    - What the agent did (its role or contribution)
-    - A clean summary of its output
-
-    Present this as a readable, organized report for the user.
-
-    You should dynamically handle any number of upstream agents without hardcoding them.
-    Use the agent names and their available context/output to structure the final report.
-
-  expected_output: >
-    A well-formatted natural language report that looks like this:
-
-    ---
-    **Agent: Interpreter**
-    Role: Parsed the user's math input
-    Output:
-    - Parsed Expression: (3x + 2x) - (x - 4)
-    - Detected Intent: Simplify
-
-    **Agent: Type Classifier**
-    Role: Determined the kind of math problem
-    Output:
-    - Task Type: Symbolic
-
-    **Agent: Tool Selector**
-    Role: Picked the best tool for solving
-    Output:
-    - Tool: SymPy
-    - Reason: It handles symbolic math tasks
-
-    (…and so on for any other agents…)
-
-    **Final Summary:**
-    The user asked for a simplification. Based on parsing and classification, 
-    the system used SymPy to simplify the expression to: 4x + 4.
-    ---
-
-    Output must be clean, labeled by agent, and sorted in logical order.
-    Avoid JSON or code formatting; use bold labels and newlines for readability.
-  agent: result_aggregator
-
-
 
 execute_symbolic_task:
   name: Execute Symbolic Expression
   description: >
-    Receive a symbolic expression in SymPy syntax and compute the result.
-    Do not interpret or explain—just execute the expression using SymPy and return the raw output.
-  expected_output: >
-    Raw SymPy result as a string or value (e.g., '4*x + 4')
-  agent: sympy_executor
+    1. Perform symbolic computation using SymPy.
+    2. Supported operations: solve, differentiate, integrate (indefinite), simplify, limit.
+    3. Only simplify what is explicitly given in the expression. DO NOT assume extra terms, rewrite structures, or expand if not asked.
+    4. Parentheses MUST be respected to preserve operator precedence and groupings.
+    5. Return a simplified symbolic result in a clean string form.
+    6. If invalid input or parsing issues arise, return: { "error": "<message>" }
 
+    Input: symbolic subtask JSON
+  expected_output: >
+    On success: { "result": "<symbolic result>" }
+    On failure: { "error": "<message>" }
+  agent: sympy_executor
 
 
 execute_numeric_computation:
   name: Execute Numeric Computation
   description: >
-    Evaluate the provided mathematical problem using numerical computation.
-    Use NumPy or SciPy to compute a result. Focus on numeric precision and efficiency.
+    1. Evaluate numeric problems using SciPy/NumPy.
+    2. Support:
+       - definite integrals
+       - function evaluation at given points
+       - unit-based real-world calculations
+    3. Round results to 4–5 decimal places.
 
-    Input: A numeric expression or code snippet.
+    Input: numeric subtask JSON
   expected_output: >
-    A clear numerical result, such as a final value, matrix, or array outcome,
-    depending on the problem input.
+    On success: { "result": <float> }
+    On failure: { "error": "<message>" }
   agent: numeric_executor
 
 search_math_knowledge:
   name: Search for Mathematical Knowledge
   description: >
-    Look up relevant mathematical information, facts, or constants.
-    This may include definitions, theorems, historical context, or fixed values.
+    1. Retrieve concise math facts from sources like Wikipedia, DuckDuckGo, or knowledge bases.
+    2. Return direct formula, definition, or constant.
+    3. Avoid full paragraphs or unrelated content.
 
-    Input: A query string describing what needs to be looked up.
+    Input: JSON with operation: "lookup"
   expected_output: >
-    A concise but informative paragraph explaining the retrieved fact
-    or resource, along with the source name (e.g., Wikipedia).
+    On success: { "result": "<short fact or formula>" }
+    On failure: { "error": "No relevant information found for the query" }
   agent: search_agent
 
 verify_result:
   name: Verify Computation Result
   description: >
-    Assess the correctness and consistency of the output generated by
-    other executor agents. Determine if a retry is necessary and annotate
-    any discrepancies or confirmations.
+    1. Re-check results from execution agents:
+       - Symbolic: simplify original expression independently and compare final form
+       - Numeric: re-evaluate with high precision
+       - Lookup: match standard definitions
+    2. Use symbolic equivalence checks to confirm correctness.
+    3. If mismatch is detected between input expression and result, raise an error.
+    4. Avoid passing through expressions that differ structurally from input unless algebraically proven equivalent.
+    5. If verified, return original result. Else: { "error": "Verification failed: <reason>" }
 
-    Input: A result string or numeric/symbolic output.
+    Input: { "task": {...}, "result": { ... } }
   expected_output: >
-    - A statement indicating whether the result is verified or not.
-    - If invalid, a message explaining why and what should be retried.
+    If correct: same result object
+    If incorrect: { "error": "Verification failed: <reason>" }
   agent: verifier
 
 
 clean_output:
   name: Clean and Present Final Output
   description: >
-    Format the final, verified output in a user-friendly and readable form.
-    This could include rounding values, simplifying text, or rephrasing explanations.
+    1. Format the verified result into a readable final string.
+    2. Round numeric values to 4–5 decimals.
+    3. Keep algebraic results unchanged except for light formatting (e.g., replace ^2 with superscript, "*" with ×).
+    4. Do not modify symbolic expressions or reorder terms unless purely cosmetic.
+    5. Preserve variable names, order, and grouping.
+    6. If an error is passed in, present as: { "final_answer": "Error: <message>" }
 
-    Input: A verified result.
+    Input: result or error from Verifier
   expected_output: >
-    A clean, easy-to-read explanation or answer suitable for display to the user.
+    { "final_answer": "<formatted result or error>" }
   agent: output_cleaner
-  context:
-    - Verify Result
+
+
+aggregate_results_task:
+  name: Aggregate Results
+  description: >
+    1. Collect and format output from all pipeline agents:
+       - Interpreter
+       - Type Classifier
+       - Planner
+       - Tool Selector
+       - Executor(s)
+       - Verifier
+       - OutputCleaner
+    2. Present each agent’s:
+       - Name
+       - Role/contribution
+       - Output (summary format)
+    3. End with the final answer.
+
+    Output should be human-readable markdown (not JSON).
+    Use headers like **Agent: X** and bullets.
+  expected_output: >
+    A full markdown report listing:
+      - Each agent’s name and output
+      - Final answer at the bottom
+  agent: result_aggregator
