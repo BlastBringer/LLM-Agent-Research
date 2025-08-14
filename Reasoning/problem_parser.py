@@ -4,14 +4,15 @@ import os
 import re
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from the parent directory
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 class ProblemParser:
     """
     Parses math problems into structured JSON format.
     """
     def __init__(self):
-        self.api_key = os.getenv("API_KEY")
+        self.api_key = os.getenv("OPENAI_API_KEY")
         self.api_base = "https://openrouter.ai/api/v1"
         self.client = openai.OpenAI(api_key=self.api_key, base_url=self.api_base)
         print("📝 Problem Parser initialized.")

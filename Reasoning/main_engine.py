@@ -25,7 +25,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import all components
 from problem_classifier import ProblemClassifier
-from problem_parser import ProblemParser
+try:
+    from enhanced_problem_parser import EnhancedProblemParser
+    ENHANCED_PARSER_AVAILABLE = True
+except ImportError:
+    from problem_parser import ProblemParser
+    ENHANCED_PARSER_AVAILABLE = False
 from subtask_identifier import SubtaskIdentifier
 from agent_delegator import AgentDelegator
 from contextual_memory_tracker import ContextualMemoryTracker
@@ -51,7 +56,15 @@ class ReasoningEngine:
         # Initialize all components in order
         self.memory = ContextualMemoryTracker()
         self.classifier = ProblemClassifier()
-        self.parser = ProblemParser()
+        
+        # Use enhanced parser if available, fallback to basic parser
+        if ENHANCED_PARSER_AVAILABLE:
+            self.parser = EnhancedProblemParser()
+            print("   🚀 Using Enhanced Problem Parser")
+        else:
+            self.parser = ProblemParser()
+            print("   📝 Using Basic Problem Parser")
+            
         self.subtask_identifier = SubtaskIdentifier()
         self.delegator = AgentDelegator()
         self.agent = SimpleAgent()
