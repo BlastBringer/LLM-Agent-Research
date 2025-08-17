@@ -315,11 +315,9 @@ JSON Output:
         """
         print(f"🚀 Enhanced parsing: {problem[:60]}...")
         
-        # Step 1: Classify problem type for strategy selection
         problem_type = self.classify_problem_type(problem)
         print(f"Detected type: {problem_type}")
         
-        # Step 2: Try primary parsing strategy
         try:
             result = self._attempt_parse(problem, problem_type)
             if self._validate_parse_result(result):
@@ -328,7 +326,6 @@ JSON Output:
         except Exception as e:
             print(f"Primary parse failed: {str(e)}")
         
-        # Step 3: Try fallback strategies
         for fallback_type in ["general_math", "word_problem", "arithmetic"]:
             if fallback_type != problem_type:
                 try:
@@ -424,6 +421,9 @@ JSON Output:
     
     def _enrich_parse_result(self, result: Dict[str, Any], original_problem: str) -> Dict[str, Any]:
         """Add metadata and computed fields to the parse result."""
+        # Add success indicator
+        result["success"] = True
+        
         result["metadata"] = {
             "original_problem": original_problem,
             "problem_length": len(original_problem),
@@ -473,6 +473,7 @@ JSON Output:
     def _emergency_parse(self, problem: str) -> Dict[str, Any]:
         """Emergency parsing when all strategies fail."""
         return {
+            "success": False,
             "problem_type": "parsing_failed",
             "original_problem": problem,
             "error": "Could not parse with any strategy",
