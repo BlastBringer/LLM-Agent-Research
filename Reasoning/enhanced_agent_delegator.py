@@ -120,8 +120,13 @@ class EnhancedAgentDelegator:
         try:
             # Get problem type from classification
             problem_type = classification.get('primary_category', 'general_mathematics')
-            complexity = classification.get('complexity', 'medium')
+            complexity = classification.get('difficulty_level', classification.get('complexity', 'medium'))  # Check both fields
             confidence = classification.get('confidence', 0.5)
+            
+            print(f"🤖 Agent Delegator Analysis:")
+            print(f"   Problem Type: {problem_type}")
+            print(f"   Complexity: {complexity}")
+            print(f"   Confidence: {confidence}")
             
             # Strategy mapping based on problem characteristics
             strategy_map = {
@@ -133,26 +138,43 @@ class EnhancedAgentDelegator:
                 'algebra_systems': 'system_solving',
                 'arithmetic_percentage': 'numerical_computation',
                 'linear_algebra': 'matrix_operations',
-                'trigonometry': 'trigonometric_solving'
+                'trigonometry': 'trigonometric_solving',
+                'calculus': 'symbolic_calculus'  # Add general calculus mapping
             }
             
             # Get base strategy
             base_strategy = strategy_map.get(problem_type, 'general_problem_solving')
             
-            # Adjust based on complexity and confidence
-            if complexity in ['high', 'very_high'] and confidence > 0.8:
-                # Use enhanced strategies for complex problems
-                if problem_type.startswith('calculus'):
-                    return 'react_reasoning'
-                elif len(parsed_data.get('equations', [])) > 1:
-                    return 'coordinated_subtask_solving'
+            # Enhanced logic for ReAct reasoning
+            should_use_react = False
+            
+            # Always use ReAct for calculus problems with good confidence
+            if (problem_type == 'calculus' or problem_type.startswith('calculus')) and confidence > 0.7:
+                print(f"   → ReAct triggered: Calculus problem with confidence {confidence}")
+                should_use_react = True
+            
+            # Use ReAct for complex problems regardless of type
+            elif complexity in ['advanced', 'high', 'very_high'] and confidence > 0.8:
+                print(f"   → ReAct triggered: High complexity ({complexity}) with confidence {confidence}")
+                should_use_react = True
+            
+            # Use ReAct for multi-equation problems
+            elif len(parsed_data.get('equations', [])) > 1:
+                print(f"   → ReAct triggered: Multiple equations detected")
+                should_use_react = True
+            
+            if should_use_react:
+                print(f"   → Recommending: react_reasoning")
+                return 'react_reasoning'
             
             # Check for multi-step problems that need delegation
             if any(keyword in problem.lower() for keyword in ['and', 'then', 'also', 'determine', 'find', 'calculate']):
                 word_count = len(problem.split())
                 if word_count > 15:
+                    print(f"   → Recommending: coordinated_subtask_solving (multi-step)")
                     return 'coordinated_subtask_solving'
             
+            print(f"   → Recommending: {base_strategy}")
             return base_strategy
             
         except Exception as e:
