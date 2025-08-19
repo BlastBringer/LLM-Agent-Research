@@ -290,15 +290,15 @@ class UnifiedMathSolver:
         
         if self.classifier:
             try:
-                log_component_usage("Classifier", "Using enhanced problem classifier")
-                classification = self.classifier.classify_detailed(problem)
+                log_component_usage("Classifier", "Using enhanced problem classifier with parser data")
+                classification = self.classifier.classify_detailed(problem, parsed_data)
                 log_component_usage("Memory", "Recording enhanced classification completion")
                 self.memory_tracker.add_step(
-                    thought="Using enhanced classifier for detailed categorization",
-                    action_taken="Enhanced classification completed",
-                    observation=f"Classified as: {classification.get('primary_category', 'unknown')}"
+                    thought="Using enhanced classifier with parser insights for detailed categorization",
+                    action_taken="Enhanced classification with parser data completed",
+                    observation=f"Classified as: {classification.get('primary_category', 'unknown')} using parser insights"
                 )
-                log_component_usage("Classifier", "Enhanced classification successful", str(classification.get('primary_category', 'unknown')))
+                log_component_usage("Classifier", "Enhanced classification with parser data successful", str(classification.get('primary_category', 'unknown')))
                 return classification
             except Exception as e:
                 log_component_usage("Classifier", "Enhanced classifier failed, falling back to built-in", str(e))
