@@ -422,12 +422,10 @@ class UnifiedMathSolver:
         # Enhanced React reasoning triggers for complex problems
         react_triggers = False
         
-        # Trigger 1: Complex calculus problems
-        if category in ['calculus', 'calculus_integration', 'calculus_differentiation']:
-            if ('∫' in problem or 'integral' in problem.lower() or 'derivative' in problem.lower()):
-                if any(char in problem for char in ['/', '^', '√', 'sqrt', 'ln', 'log', 'sin', 'cos', 'tan']):
-                    log_component_usage("React", "Complex calculus problem detected")
-                    react_triggers = True
+        # Trigger 1: All calculus problems (not just complex ones)
+        if category in ['calculus', 'calculus_integration', 'calculus_differentiation'] or any(word in problem.lower() for word in ['derivative', 'differentiate', 'd/dx', 'd/dt', 'integrate', '∫', 'integral', 'limit', 'lim']):
+            log_component_usage("React", "Calculus problem detected - using ReAct")
+            react_triggers = True
         
         # Trigger 2: Multi-step problems (contains "and", "then", "also")
         if any(word in problem.lower() for word in ['and then', 'then find', 'also find', 'determine', 'calculate and']):
@@ -451,19 +449,22 @@ class UnifiedMathSolver:
             log_component_usage("React", "Activating Enhanced React reasoning")
             strategy = 'react_reasoning'
         
-        # Override strategy based on keywords
-        if '=' in problem:
-            strategy = 'algebraic_solving'
-            log_component_usage("Strategy", "Strategy override detected", "Equation found → algebraic_solving")
-        elif any(word in problem.lower() for word in ['derivative', 'differentiate', 'd/dx']):
-            strategy = 'symbolic_calculus'
-            log_component_usage("Strategy", "Strategy override detected", "Calculus derivative → symbolic_calculus")
-        elif any(word in problem.lower() for word in ['integrate', '∫', 'integral']):
-            strategy = 'symbolic_calculus'
-            log_component_usage("Strategy", "Strategy override detected", "Calculus integration → symbolic_calculus")
-        elif '%' in problem or 'percent' in problem.lower():
-            strategy = 'numerical_computation'
-            log_component_usage("Strategy", "Strategy override detected", "Percentage problem → numerical_computation")
+        # Override strategy based on keywords - BUT ONLY if ReAct is not triggered
+        if not react_triggers:
+            if '=' in problem:
+                strategy = 'algebraic_solving'
+                log_component_usage("Strategy", "Strategy override detected", "Equation found → algebraic_solving")
+            elif any(word in problem.lower() for word in ['derivative', 'differentiate', 'd/dx']):
+                strategy = 'symbolic_calculus'
+                log_component_usage("Strategy", "Strategy override detected", "Calculus derivative → symbolic_calculus")
+            elif any(word in problem.lower() for word in ['integrate', '∫', 'integral']):
+                strategy = 'symbolic_calculus'
+                log_component_usage("Strategy", "Strategy override detected", "Calculus integration → symbolic_calculus")
+            elif '%' in problem or 'percent' in problem.lower():
+                strategy = 'numerical_computation'
+                log_component_usage("Strategy", "Strategy override detected", "Percentage problem → numerical_computation")
+        else:
+            log_component_usage("React", "Strategy overrides skipped - ReAct reasoning takes priority")
         
         log_component_usage("Strategy", "Final strategy determined", strategy)
         log_component_usage("Memory", "Recording final strategy selection")
