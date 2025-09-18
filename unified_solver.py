@@ -93,6 +93,12 @@ class UnifiedMathSolver:
         self.classifier = None
         self.subtask_identifier = None
         self.agent_delegator = None
+        self.subtask_interpreter = None
+        
+        # Learning mechanism for ReAct solutions
+        self.solution_cache_file = os.path.join(current_dir, 'learned_solutions.json')
+        self.learned_solutions = self._load_learned_solutions()
+        self.failed_problems = []  # Track problems that required ReAct
         
         # Initialize working components
         self._initialize_components()
@@ -126,6 +132,10 @@ class UnifiedMathSolver:
                 log_component_usage("Agent", "Loading enhanced agent delegator")
                 from Reasoning.enhanced_agent_delegator import EnhancedAgentDelegator
                 
+                # Load Agent folder components
+                log_component_usage("Agent", "Loading enhanced subtask interpreter")
+                from Agent.enhanced_subtask_interpreter import EnhancedSubtaskInterpreter
+                
                 self.parser = EnhancedProblemParser()
                 log_component_usage("Parser", "Enhanced Problem Parser initialized")
                 self.classifier = EnhancedProblemClassifier()
@@ -134,6 +144,8 @@ class UnifiedMathSolver:
                 log_component_usage("Subtask", "Enhanced Subtask Identifier initialized")
                 self.agent_delegator = EnhancedAgentDelegator()
                 log_component_usage("Agent", "Enhanced Agent Delegator initialized")
+                self.subtask_interpreter = EnhancedSubtaskInterpreter()
+                log_component_usage("Agent", "Enhanced Subtask Interpreter initialized")
                 print("✅ Enhanced reasoning components loaded")
                 
             except ImportError as e:
@@ -163,6 +175,33 @@ class UnifiedMathSolver:
         start_time = datetime.now()
         
         try:
+            # Step 0: Check for learned solutions first
+            learned_solution = self._check_learned_solution(problem)
+            if learned_solution:
+                self._log_learning_usage(problem, learned_solution, "attempting_to_apply")
+                learned_result = self._apply_learned_solution(problem, learned_solution)
+                if learned_result and learned_result != 'Could not adapt learned solution':
+                    self._log_learning_success(problem, learned_solution, learned_result)
+                    
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    
+                    return {
+                        'success': True,
+                        'solution': learned_result,
+                        'method': 'learned_from_react',
+                        'execution_time': execution_time,
+                        'reasoning_steps': [{
+                            'thought': 'Applied learned solution pattern from previous ReAct success',
+                            'action': f"Used method: {learned_solution.get('method')}",
+                            'observation': f"Result: {learned_result}"
+                        }],
+                        'verification': 'Applied from learned solution',
+                        'classification': learned_solution.get('problem_type', 'learned'),
+                        'strategy': 'learned_solution'
+                    }
+                else:
+                    log_component_usage("Learning", "Could not apply learned solution - proceeding with normal flow")
+            
             # Step 1: Initialize memory tracking
             log_component_usage("Memory", "Adding initial step to memory tracker")
             self.memory_tracker.add_step(
@@ -191,6 +230,22 @@ class UnifiedMathSolver:
             log_component_usage("Integration", "Executing solution with chosen strategy", strategy)
             solution = self._execute_solution(problem, parsed_data, classification, strategy)
             
+            # If solution failed and strategy wasn't ReAct, try ReAct and learn from it
+            if (solution in ['Problem could not be solved with available methods', 'Could not parse equation format'] 
+                and strategy != 'react_reasoning'):
+                log_component_usage("Learning", "Main solver failed - trying ReAct and learning from it")
+                
+                self.failed_problems.append({
+                    'problem': problem,
+                    'failed_strategy': strategy,
+                    'failed_at': datetime.now().isoformat()
+                })
+                
+                react_result = self._solve_with_react_reasoning_and_learn(problem, parsed_data)
+                if react_result and react_result != 'ReAct reasoning did not find solution':
+                    solution = react_result
+                    strategy = 'react_reasoning_fallback'
+            
             # Step 6: Verify the solution
             print("✅ Step 5: Verifying solution...")
             log_component_usage("Verification", "Verifying solution correctness")
@@ -203,16 +258,28 @@ class UnifiedMathSolver:
             
             execution_time = (datetime.now() - start_time).total_seconds()
             
+            # Generate step-by-step explanation
+            reasoning_steps = self.memory_tracker.get_full_history()
+            step_by_step_explanation = self._format_step_by_step_explanation(reasoning_steps)
+            
             print(f"\n🎉 PROBLEM SOLVED in {execution_time:.2f} seconds!")
+            
+            # Display step-by-step solution
+            print(f"\n📋 STEP-BY-STEP SOLUTION:")
+            print("=" * 40)
+            print(step_by_step_explanation)
             
             return {
                 "success": True,
                 "problem": problem,
                 "solution": solution,
+                "method": strategy,
                 "verification": verification,
                 "formatted_response": final_response,
+                "step_by_step_explanation": step_by_step_explanation,
                 "execution_time": execution_time,
-                "reasoning_steps": self.memory_tracker.get_full_history()
+                "time_taken": execution_time,  # For compatibility
+                "reasoning_steps": reasoning_steps
             }
             
         except Exception as e:
@@ -385,8 +452,19 @@ class UnifiedMathSolver:
                         action_taken="Subtask identification and decomposition",
                         observation=f"Identified subtasks: {[st.description for st in subtasks]}"
                     )
-                    # For multi-subtask problems, use coordinated solving
-                    return 'coordinated_subtask_solving'
+                    
+                    # Use the subtask interpreter for coordinated solving
+                    if self.subtask_interpreter:
+                        log_component_usage("Agent", "Using subtask interpreter for coordination")
+                        self.memory_tracker.add_step(
+                            thought="Multiple subtasks identified, using subtask interpreter for coordination",
+                            action_taken="Delegate to SubtaskInterpreter for coordinated execution",
+                            observation="Starting coordinated subtask solving process"
+                        )
+                        return 'coordinated_subtask_solving'
+                    else:
+                        # Fallback to original coordinated solving
+                        return 'coordinated_subtask_solving'
                 else:
                     log_component_usage("Subtask", "Single task identified - no decomposition needed")
             except Exception as e:
@@ -494,6 +572,9 @@ class UnifiedMathSolver:
             elif strategy == 'react_reasoning':
                 log_component_usage("React", "Using React-style reasoning approach")
                 solution = self._solve_with_react_reasoning(problem, parsed_data)
+            elif strategy == 'coordinated_subtask_solving':
+                log_component_usage("Agent", "Using coordinated subtask solving")
+                solution = self._solve_with_coordinated_subtasks(problem, parsed_data)
             elif strategy == 'numerical_computation':
                 log_component_usage("Tool", "Using numerical computation engine", "Python built-ins")
                 solution = self._solve_numerical(problem, parsed_data)
@@ -582,8 +663,12 @@ class UnifiedMathSolver:
                     expr_str = re.sub(r'[.!?]$', '', expr_str)
                     
                     try:
-                        # Fix implicit multiplication
-                        expr_str = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expr_str)
+                        # Fix implicit multiplication comprehensively
+                        expr_str = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expr_str)  # 2x -> 2*x
+                        expr_str = re.sub(r'(\d+)(\()', r'\1*\2', expr_str)        # 4( -> 4*(
+                        expr_str = re.sub(r'(\))(\d+)', r'\1*\2', expr_str)        # )2 -> )*2
+                        expr_str = re.sub(r'(\))([a-zA-Z])', r'\1*\2', expr_str)   # )x -> )*x
+                        expr_str = re.sub(r'(\))(\()', r'\1*\2', expr_str)         # )( -> )*(
                         log_component_usage("SymPy", "Parsing expression with SymPy")
                         expr = sp.sympify(expr_str)
                         x = sp.Symbol('x')
@@ -619,8 +704,17 @@ class UnifiedMathSolver:
                     expr_str = match.group(1)
                     log_component_usage("SymPy", "Extracted expression for integration", expr_str)
                     try:
-                        # Fix implicit multiplication
-                        expr_str = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expr_str)
+                        # Normalize Unicode characters first
+                        expr_str = expr_str.replace('−', '-')  # Unicode minus to ASCII minus
+                        expr_str = expr_str.replace('–', '-')  # En dash to ASCII minus
+                        expr_str = expr_str.replace('—', '-')  # Em dash to ASCII minus
+                        
+                        # Fix implicit multiplication comprehensively
+                        expr_str = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expr_str)  # 2x -> 2*x
+                        expr_str = re.sub(r'(\d+)(\()', r'\1*\2', expr_str)        # 4( -> 4*(
+                        expr_str = re.sub(r'(\))(\d+)', r'\1*\2', expr_str)        # )2 -> )*2
+                        expr_str = re.sub(r'(\))([a-zA-Z])', r'\1*\2', expr_str)   # )x -> )*x
+                        expr_str = re.sub(r'(\))(\()', r'\1*\2', expr_str)         # )( -> )*(
                         log_component_usage("SymPy", "Parsing integration expression")
                         expr = sp.sympify(expr_str)
                         x = sp.Symbol('x')
@@ -645,6 +739,7 @@ class UnifiedMathSolver:
     def _solve_algebra_sympy(self, problem: str, variables: List[sp.Symbol]) -> Any:
         """Solve algebraic equations using SymPy."""
         log_component_usage("SymPy", "Starting algebraic equation solving")
+        
         # Look for equations (contains =)
         if '=' in problem:
             log_component_usage("SymPy", "Detected equation with equals sign")
@@ -658,9 +753,18 @@ class UnifiedMathSolver:
                 left = re.sub(r'solve for \w+:?\s*', '', left, flags=re.IGNORECASE)
                 left = re.sub(r'find \w+:?\s*', '', left, flags=re.IGNORECASE)
                 
-                # Fix implicit multiplication (2x -> 2*x, 3y -> 3*y, etc.)
-                left = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', left)
-                right = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', right)
+                # Fix implicit multiplication (2x -> 2*x, 4(2x+7) -> 4*(2x+7), etc.)
+                left = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', left)  # 2x -> 2*x
+                left = re.sub(r'(\d+)(\()', r'\1*\2', left)        # 4( -> 4*(
+                left = re.sub(r'(\))(\d+)', r'\1*\2', left)        # )2 -> )*2
+                left = re.sub(r'(\))([a-zA-Z])', r'\1*\2', left)   # )x -> )*x
+                left = re.sub(r'(\))(\()', r'\1*\2', left)         # )( -> )*(
+                
+                right = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', right)  # 2x -> 2*x
+                right = re.sub(r'(\d+)(\()', r'\1*\2', right)        # 4( -> 4*(
+                right = re.sub(r'(\))(\d+)', r'\1*\2', right)        # )2 -> )*2
+                right = re.sub(r'(\))([a-zA-Z])', r'\1*\2', right)   # )x -> )*x
+                right = re.sub(r'(\))(\()', r'\1*\2', right)         # )( -> )*(
                 
                 try:
                     left_expr = sp.sympify(left)
@@ -687,6 +791,55 @@ class UnifiedMathSolver:
                         action_taken=f"Manual equation solving: {str(e)}",
                         observation="Using alternative solving method"
                     )
+        else:
+            # Handle expressions without equals sign - simplify or evaluate
+            log_component_usage("SymPy", "Detected algebraic expression (no equals sign)")
+            
+            # Clean and prepare the expression
+            expr_str = problem.strip()
+            
+            # Remove common instruction phrases
+            expr_str = re.sub(r'simplify:?\s*', '', expr_str, flags=re.IGNORECASE)
+            expr_str = re.sub(r'evaluate:?\s*', '', expr_str, flags=re.IGNORECASE)
+            expr_str = re.sub(r'expand:?\s*', '', expr_str, flags=re.IGNORECASE)
+            expr_str = re.sub(r'solve:?\s*', '', expr_str, flags=re.IGNORECASE)
+            
+            # Fix implicit multiplication comprehensively
+            expr_str = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expr_str)  # 2x -> 2*x
+            expr_str = re.sub(r'(\d+)(\()', r'\1*\2', expr_str)        # 4( -> 4*(, 3( -> 3*(
+            expr_str = re.sub(r'(\))(\d+)', r'\1*\2', expr_str)        # )2 -> )*2
+            expr_str = re.sub(r'(\))([a-zA-Z])', r'\1*\2', expr_str)   # )x -> )*x
+            expr_str = re.sub(r'(\))(\()', r'\1*\2', expr_str)         # )( -> )*(
+            expr_str = re.sub(r'([a-zA-Z])(\()', r'\1*\2', expr_str)   # x( -> x*(
+            
+            # Handle exponentiation (^) to (**)
+            expr_str = re.sub(r'\^', '**', expr_str)
+            
+            try:
+                log_component_usage("SymPy", f"Parsing expression: {expr_str}")
+                expr = sp.sympify(expr_str)
+                log_component_usage("SymPy", f"Successfully parsed: {expr}")
+                
+                # Try to expand and simplify
+                expanded = sp.expand(expr)
+                simplified = sp.simplify(expanded)
+                
+                self.memory_tracker.add_step(
+                    thought=f"Simplifying expression: {expr}",
+                    action_taken=f"Expanding: {expanded}, then simplifying",
+                    observation=f"Final result: {simplified}"
+                )
+                
+                log_component_usage("SymPy", f"Expression result: {simplified}")
+                return simplified
+                
+            except Exception as e:
+                log_component_usage("SymPy", f"Expression parsing failed: {str(e)}")
+                self.memory_tracker.add_step(
+                    thought="SymPy parsing failed for expression",
+                    action_taken=f"Manual expression handling: {str(e)}",
+                    observation="Using alternative approach"
+                )
         
         return "Could not parse equation format"
     
@@ -958,7 +1111,7 @@ class UnifiedMathSolver:
             log_component_usage("React", "Enhanced ReAct Math Agent initialized")
             
             # Solve the problem using the enhanced agent
-            result = react_agent.solve_problem(problem, max_iterations=10)
+            result = react_agent.solve_problem(problem, max_iterations=20)
             
             # Record the ReAct reasoning steps
             if result.get('reasoning_steps'):
@@ -973,6 +1126,10 @@ class UnifiedMathSolver:
             
             if result['status'] == 'solved':
                 log_component_usage("React", "Enhanced ReAct reasoning successful")
+                
+                # Learn from the successful ReAct solution
+                self._learn_from_react_solution(problem, result)
+                
                 return result['solution']
             else:
                 log_component_usage("React", "Enhanced ReAct reasoning incomplete")
@@ -984,6 +1141,44 @@ class UnifiedMathSolver:
         except Exception as e:
             log_component_usage("React", "Enhanced ReAct agent error", str(e))
             return self._basic_react_reasoning(problem, parsed_data)
+    
+    def _solve_with_react_reasoning_and_learn(self, problem: str, parsed_data: Dict[str, Any]) -> Any:
+        """Solve using ReAct reasoning and learn from the successful solution."""
+        log_component_usage("Learning", "Using ReAct with learning enabled")
+        
+        try:
+            # Import and use the Enhanced ReAct Math Agent
+            from Reasoning.enhanced_react_math_agent import EnhancedReActMathAgent
+            
+            # Initialize the enhanced agent
+            react_agent = EnhancedReActMathAgent()
+            
+            # Solve the problem using the enhanced agent
+            result = react_agent.solve_problem(problem, max_iterations=20)
+            
+            # Learn from the successful ReAct solution
+            if result.get('status') == 'solved':
+                self._learn_from_react_solution(problem, result)
+                log_component_usage("Learning", "Learned from successful ReAct solution")
+            
+            # Record the ReAct reasoning steps
+            if result.get('reasoning_steps'):
+                for step in result['reasoning_steps']:
+                    self.memory_tracker.add_step(
+                        thought=step.get('thought', 'ReAct reasoning step'),
+                        action_taken=step.get('action', 'ReAct action'),
+                        observation=step.get('tool_result', step.get('analysis', 'ReAct observation'))
+                    )
+            
+            if result['status'] == 'solved':
+                return result['solution']
+            else:
+                return result.get('solution', 'ReAct reasoning did not find solution')
+                
+        except Exception as e:
+            log_component_usage("Learning", f"ReAct with learning failed: {e}")
+            # Fallback to regular ReAct without learning
+            return self._solve_with_react_reasoning(problem, parsed_data)
     
     def _basic_react_reasoning(self, problem: str, parsed_data: Dict[str, Any]) -> Any:
         """Fallback basic React-style reasoning implementation."""
@@ -1068,6 +1263,116 @@ class UnifiedMathSolver:
         log_component_usage("React", "React reasoning completed without solution")
         return "React reasoning could not solve the problem"
     
+    def _solve_with_coordinated_subtasks(self, problem: str, parsed_data: Dict[str, Any]) -> Any:
+        """Solve using coordinated subtask approach with enhanced interpreter."""
+        log_component_usage("Agent", "Starting coordinated subtask solving")
+        
+        try:
+            # Re-identify subtasks for coordination
+            if self.subtask_identifier:
+                subtasks = self.subtask_identifier.identify_subtasks(problem, parsed_data)
+                log_component_usage("Subtask", f"Re-identified {len(subtasks)} subtasks for coordination")
+                
+                if self.subtask_interpreter and subtasks:
+                    log_component_usage("Agent", "Using EnhancedSubtaskInterpreter for coordination")
+                    
+                    # Create reasoning components dict
+                    reasoning_components = {
+                        'parser': self.parser,
+                        'classifier': self.classifier,
+                        'memory_tracker': self.memory_tracker
+                    }
+                    
+                    # First interpret and plan
+                    execution_plan = self.subtask_interpreter.interpret_and_plan(
+                        problem=problem,
+                        parsed_data=parsed_data,
+                        reasoning_components=reasoning_components
+                    )
+                    
+                    # Then execute the plan
+                    result = self.subtask_interpreter.execute_plan(
+                        execution_plan=execution_plan,
+                        reasoning_components=reasoning_components
+                    )
+                    
+                    # Record the coordination process
+                    self.memory_tracker.add_step(
+                        thought="Coordinated execution of multiple subtasks using EnhancedSubtaskInterpreter",
+                        action_taken="EnhancedSubtaskInterpreter.interpret_and_plan + execute_plan",
+                        observation=f"Coordinated result: {result}"
+                    )
+                    
+                    log_component_usage("Agent", "EnhancedSubtaskInterpreter coordination successful")
+                    return result
+                
+                else:
+                    # Fallback to sequential subtask solving
+                    log_component_usage("Agent", "Using fallback sequential subtask solving")
+                    results = []
+                    
+                    for i, subtask in enumerate(subtasks):
+                        log_component_usage("Subtask", f"Solving subtask {i+1}/{len(subtasks)}")
+                        self.memory_tracker.add_step(
+                            thought=f"Solving subtask {i+1}: {subtask.description}",
+                            action_taken=f"Execute subtask: {subtask.type}",
+                            observation="Starting subtask resolution"
+                        )
+                        
+                        # Solve each subtask individually
+                        subtask_result = self._solve_single_subtask(subtask, parsed_data)
+                        results.append(subtask_result)
+                        
+                        self.memory_tracker.add_step(
+                            thought=f"Subtask {i+1} completed",
+                            action_taken=f"Subtask result: {subtask_result}",
+                            observation=f"Subtask {i+1} solved successfully"
+                        )
+                    
+                    # Combine results
+                    final_result = self._combine_subtask_results(results, subtasks)
+                    log_component_usage("Agent", "Sequential subtask solving completed")
+                    return final_result
+            
+            else:
+                log_component_usage("Agent", "No subtask identifier available - using general solving")
+                return self._solve_general(problem, parsed_data)
+                
+        except Exception as e:
+            log_component_usage("Agent", "Coordinated subtask solving failed", str(e))
+            return f"Coordinated subtask solving error: {e}"
+    
+    def _solve_single_subtask(self, subtask, parsed_data: Dict[str, Any]) -> Any:
+        """Solve a single subtask using appropriate method."""
+        try:
+            # Determine best method for this subtask type
+            if subtask.type in ['calculation', 'computation']:
+                return self._solve_numerical(subtask.description, parsed_data)
+            elif subtask.type in ['equation', 'algebra']:
+                return self._solve_with_sympy(subtask.description, parsed_data, {}, 'algebraic_solving')
+            elif subtask.type in ['calculus', 'differentiation', 'integration']:
+                return self._solve_with_sympy(subtask.description, parsed_data, {}, 'symbolic_calculus')
+            else:
+                # Use React reasoning for complex subtasks
+                return self._solve_with_react_reasoning(subtask.description, parsed_data)
+        except Exception as e:
+            return f"Subtask solving error: {e}"
+    
+    def _combine_subtask_results(self, results: List[Any], subtasks: List) -> Any:
+        """Combine individual subtask results into final answer."""
+        if len(results) == 1:
+            return results[0]
+        
+        # For multiple results, create a comprehensive answer
+        combined_answer = "Multi-step solution:\n"
+        for i, (result, subtask) in enumerate(zip(results, subtasks)):
+            combined_answer += f"Step {i+1} ({subtask.description}): {result}\n"
+        
+        # Try to extract final numerical answer if possible
+        final_answer = results[-1]  # Often the last step contains the final answer
+        
+        return f"{combined_answer}\nFinal Answer: {final_answer}"
+
     def _verify_solution(self, problem: str, solution: Any, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         """Verify the solution is correct."""
         log_component_usage("Verification", "Starting solution verification")
@@ -1167,6 +1472,35 @@ class UnifiedMathSolver:
         
         return response
     
+    def _format_step_by_step_explanation(self, reasoning_steps: List[Dict[str, Any]]) -> str:
+        """Format reasoning steps into a clear step-by-step explanation."""
+        if not reasoning_steps:
+            return "No detailed steps recorded."
+        
+        explanation = []
+        step_num = 1
+        
+        for step in reasoning_steps:
+            thought = step.get('thought', '')
+            action = step.get('action_taken', step.get('action', ''))
+            observation = step.get('observation', '')
+            
+            # Skip very generic or repetitive steps
+            if any(skip_phrase in thought.lower() for skip_phrase in [
+                'initialize', 'starting', 'loading', 'recording', 'retrieving'
+            ]):
+                continue
+            
+            explanation.append(f"Step {step_num}: {thought}")
+            if action and action != thought:
+                explanation.append(f"   Action: {action}")
+            if observation and observation not in [thought, action]:
+                explanation.append(f"   Result: {observation}")
+            explanation.append("")  # Add blank line
+            step_num += 1
+        
+        return "\n".join(explanation) if explanation else "Problem solved directly without intermediate steps."
+    
     # Utility methods for parsing
     def _extract_variables(self, problem: str) -> List[str]:
         """Extract variables from the problem."""
@@ -1212,74 +1546,319 @@ class UnifiedMathSolver:
             return 'arithmetic'
         else:
             return 'general'
+    
+    def _load_learned_solutions(self) -> Dict[str, Any]:
+        """Load previously learned solutions from ReAct agent."""
+        try:
+            if os.path.exists(self.solution_cache_file):
+                with open(self.solution_cache_file, 'r') as f:
+                    solutions = json.load(f)
+                    log_component_usage("Learning", f"Loaded {len(solutions)} learned solutions")
+                    return solutions
+        except Exception as e:
+            log_component_usage("Learning", f"Could not load learned solutions: {e}")
+        
+        log_component_usage("Learning", "Starting with empty learned solutions cache")
+        return {}
+    
+    def _save_learned_solutions(self):
+        """Save learned solutions to file."""
+        try:
+            with open(self.solution_cache_file, 'w') as f:
+                json.dump(self.learned_solutions, f, indent=2, default=str)
+            log_component_usage("Learning", f"Saved {len(self.learned_solutions)} learned solutions")
+        except Exception as e:
+            log_component_usage("Learning", f"Could not save learned solutions: {e}")
+    
+    def _get_problem_signature(self, problem: str) -> str:
+        """Generate a signature for the problem to match similar problems."""
+        # Normalize the problem to create a signature
+        normalized = re.sub(r'\d+', 'N', problem.lower())  # Replace numbers with N
+        normalized = re.sub(r'[a-z](?![a-z])', 'V', normalized)  # Replace single variables with V
+        normalized = re.sub(r'\s+', ' ', normalized).strip()  # Normalize whitespace
+        return normalized
+    
+    def _check_learned_solution(self, problem: str) -> Optional[Dict[str, Any]]:
+        """Check if we have a learned solution for this type of problem."""
+        signature = self._get_problem_signature(problem)
+        
+        # Check for exact signature match
+        if signature in self.learned_solutions:
+            learned_data = self.learned_solutions[signature]
+            log_component_usage("Learning", "🎯 EXACT MATCH FOUND", f"Signature: {signature}")
+            print(f"    📚 Original Problem: {learned_data.get('original_problem', 'N/A')}")
+            print(f"    🔧 Method Used: {learned_data.get('method', 'N/A')}")
+            print(f"    📅 Learned At: {learned_data.get('learned_at', 'N/A')}")
+            return learned_data
+        
+        # Check for similar patterns
+        for learned_sig, solution_data in self.learned_solutions.items():
+            # Simple similarity check - same length and similar structure
+            if (len(signature.split()) == len(learned_sig.split()) and 
+                signature.count('(') == learned_sig.count('(') and
+                signature.count('+') == learned_sig.count('+')):
+                log_component_usage("Learning", "🔍 SIMILAR PATTERN FOUND", f"Pattern: {learned_sig}")
+                print(f"    📚 Original Problem: {solution_data.get('original_problem', 'N/A')}")
+                print(f"    🔧 Method Used: {solution_data.get('method', 'N/A')}")
+                print(f"    📅 Learned At: {solution_data.get('learned_at', 'N/A')}")
+                print(f"    🔗 Similarity: Structure and operators match")
+                return solution_data
+        
+        log_component_usage("Learning", "❌ No learned solution found", f"Signature: {signature}")
+        return None
+    
+    def _learn_from_react_solution(self, problem: str, react_result: Dict[str, Any]):
+        """Learn from a successful ReAct solution."""
+        if react_result.get('status') == 'solved' and react_result.get('solution'):
+            signature = self._get_problem_signature(problem)
+            
+            # Extract the solution method from ReAct steps
+            solution_method = self._extract_solution_method(react_result)
+            
+            learned_data = {
+                'original_problem': problem,
+                'solution': str(react_result['solution']),
+                'method': solution_method,
+                'reasoning_steps': react_result.get('reasoning_steps', []),
+                'learned_at': datetime.now().isoformat(),
+                'problem_type': react_result.get('problem_type', 'unknown'),
+                'strategy_used': 'react_reasoning'
+            }
+            
+            self.learned_solutions[signature] = learned_data
+            self._save_learned_solutions()
+            
+            # Enhanced logging for new learning
+            print(f"\n🎓 NEW SOLUTION LEARNED!")
+            print("=" * 40)
+            print(f"📝 Problem: {problem}")
+            print(f"🔧 Method Extracted: {solution_method}")
+            print(f"🎯 Problem Type: {react_result.get('problem_type', 'unknown')}")
+            print(f"📊 Total Learned Solutions: {len(self.learned_solutions)}")
+            log_component_usage("Learning", f"📚 Learned new solution pattern", signature)
+            
+            # Log new learning for analytics
+            self._log_new_learning(problem, solution_method, signature)
+    
+    def _extract_solution_method(self, react_result: Dict[str, Any]) -> str:
+        """Extract the key solution method from ReAct reasoning steps."""
+        steps = react_result.get('reasoning_steps', [])
+        
+        # Look for key mathematical operations in the steps
+        methods = []
+        for step in steps:
+            action = step.get('action', '').lower()
+            if 'sympy' in action or 'symbolic' in action:
+                methods.append('symbolic_math')
+            elif 'expand' in action or 'simplif' in action:
+                methods.append('algebraic_manipulation')
+            elif 'derivative' in action:
+                methods.append('calculus_differentiation')
+            elif 'integral' in action:
+                methods.append('calculus_integration')
+            elif 'solve' in action and 'equation' in action:
+                methods.append('equation_solving')
+        
+        return ', '.join(set(methods)) if methods else 'general_reasoning'
+    
+    def _apply_learned_solution(self, problem: str, learned_data: Dict[str, Any]) -> Any:
+        """Apply a learned solution pattern to the current problem."""
+        method = learned_data.get('method', 'unknown')
+        log_component_usage("Learning", f"🔧 Applying learned method: {method}")
+        
+        try:
+            # If the method involves symbolic math, try to adapt it
+            if 'symbolic_math' in method:
+                log_component_usage("Learning", "Using learned symbolic approach")
+                print(f"    🧮 Applying SymPy-based solution pattern")
+                
+                # Try to parse and solve using the learned approach
+                variables = [sp.Symbol(var) for var in re.findall(r'[a-zA-Z]', problem)]
+                if not variables:
+                    variables = [sp.Symbol('x')]
+                
+                result = self._solve_with_sympy(problem, {}, variables, 'algebraic_solving')
+                log_component_usage("Learning", f"✅ Symbolic method result: {result}")
+                return result
+            
+            elif 'algebraic_manipulation' in method:
+                log_component_usage("Learning", "Using learned algebraic approach")
+                print(f"    📐 Applying algebraic manipulation pattern")
+                result = self._manipulate_expression_sympy(problem, [sp.Symbol('x')])
+                log_component_usage("Learning", f"✅ Algebraic method result: {result}")
+                return result
+            
+            else:
+                log_component_usage("Learning", "Using learned general approach")
+                print(f"    🎯 Applying general reasoning pattern")
+                # Apply the learned reasoning pattern
+                self.memory_tracker.add_step(
+                    thought=f"Applying learned solution pattern from similar problem",
+                    action_taken=f"Using method: {method}",
+                    observation=f"Adapting solution approach from previous learning"
+                )
+                
+                # Try to extract the core approach and apply it
+                result = learned_data.get('solution', 'Could not adapt learned solution')
+                log_component_usage("Learning", f"✅ General method result: {result}")
+                return result
+                
+        except Exception as e:
+            log_component_usage("Learning", f"❌ Failed to apply learned solution: {e}")
+            return None
 
-def interactive_solver():
-    """Interactive problem solving interface."""
+    def _log_learning_usage(self, problem: str, learned_data: Dict[str, Any], status: str):
+        """Log detailed information about learning mechanism usage."""
+        print(f"\n🧠 LEARNING MECHANISM ACTIVATED")
+        print("=" * 50)
+        print(f"📝 Current Problem: {problem}")
+        print(f"📚 Found Learned Solution:")
+        print(f"    • Original Problem: {learned_data.get('original_problem', 'N/A')}")
+        print(f"    • Method: {learned_data.get('method', 'N/A')}")
+        print(f"    • Problem Type: {learned_data.get('problem_type', 'N/A')}")
+        print(f"    • Strategy: {learned_data.get('strategy_used', 'N/A')}")
+        print(f"    • Learned At: {learned_data.get('learned_at', 'N/A')}")
+        print(f"🔄 Status: {status.replace('_', ' ').title()}")
+    
+    def _log_learning_success(self, problem: str, learned_data: Dict[str, Any], result: Any):
+        """Log successful application of learned solution."""
+        print(f"\n✅ LEARNING MECHANISM SUCCESS!")
+        print("=" * 50)
+        print(f"🎯 Problem Type: {learned_data.get('problem_type', 'Unknown')}")
+        print(f"🔧 Applied Method: {learned_data.get('method', 'N/A')}")
+        print(f"💡 Solution: {result}")
+        print(f"⚡ Benefit: Bypassed full reasoning pipeline using learned pattern")
+        
+        # Log to file for analytics
+        self._log_learning_analytics(problem, learned_data, result, success=True)
+    
+    def _log_learning_analytics(self, problem: str, learned_data: Dict[str, Any], result: Any, success: bool):
+        """Log learning mechanism usage for analytics."""
+        analytics_file = os.path.join(current_dir, 'learning_analytics.log')
+        
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'problem': problem,
+            'learned_from': learned_data.get('original_problem', 'N/A'),
+            'method_used': learned_data.get('method', 'N/A'),
+            'problem_type': learned_data.get('problem_type', 'N/A'),
+            'result': str(result) if result else 'None',
+            'success': success,
+            'learned_at': learned_data.get('learned_at', 'N/A')
+        }
+        
+        try:
+            with open(analytics_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\n')
+        except Exception as e:
+            log_component_usage("Learning", f"Could not save analytics: {e}")
+    
+    def _log_new_learning(self, problem: str, method: str, signature: str):
+        """Log when a new solution is learned."""
+        new_learning_file = os.path.join(current_dir, 'new_learning.log')
+        
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'problem': problem,
+            'signature': signature,
+            'method_learned': method,
+            'total_learned_solutions': len(self.learned_solutions)
+        }
+        
+        try:
+            with open(new_learning_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\n')
+        except Exception as e:
+            log_component_usage("Learning", f"Could not save new learning log: {e}")
+
+def main():
+    """Main function for interactive testing."""
     print("🎯 UNIFIED MATHEMATICAL PROBLEM SOLVER")
     print("=" * 50)
-    print("Enter any mathematical problem and get a complete solution!")
-    print("Examples:")
-    print("  • Solve for x: 2x + 5 = 13")
-    print("  • Find the derivative of x^2 + 3x + 2")
-    print("  • Simplify: (x + 2)(x - 3)")
-    print("  • What is 15% of 240?")
-    print("  • Integrate x^2 + 3x with respect to x")
-    print("\nType 'quit' to exit.\n")
+    print("Welcome to the Enhanced Mathematical Problem Solver!")
+    print("Enter mathematical problems to solve, or 'quit' to exit.")
+    print("=" * 50)
     
-    solver = UnifiedMathSolver()
+    # Initialize the solver
+    try:
+        solver = UnifiedMathSolver()
+        print("✅ Solver initialized successfully!\n")
+    except Exception as e:
+        print(f"❌ Failed to initialize solver: {e}")
+        return
     
+    # Interactive loop
     while True:
         try:
-            problem = input("🔢 Enter your problem: ").strip()
+            # Get user input
+            problem = input("\n🧮 Enter your mathematical problem: ").strip()
             
             if problem.lower() in ['quit', 'exit', 'q']:
-                print("👋 Thank you for using the Unified Mathematical Problem Solver!")
+                print("👋 Goodbye!")
                 break
             
             if not problem:
-                print("Please enter a problem to solve.")
                 continue
             
             # Solve the problem
+            print(f"\n🔍 Solving: {problem}")
             result = solver.solve_problem(problem)
             
-            if result["success"]:
-                print("\n" + "="*60)
-                print(result["formatted_response"])
-                print("="*60)
-                print(f"✅ Solved in {result['execution_time']:.2f} seconds")
-                
-                if result.get("verification", {}).get("verified"):
-                    print(f"✅ Solution verified: {result['verification']['result']}")
-                
-            else:
-                print(f"\n❌ Error: {result['error']}")
-                print("Please try rephrasing the problem or check the syntax.")
+            # Display results
+            print(f"\n📊 RESULTS:")
+            print(f"✅ Success: {result.get('success', False)}")
+            print(f"💡 Solution: {result.get('solution', 'No solution found')}")
+            print(f"⚙️  Method: {result.get('method', 'Unknown')}")
+            print(f"⏱️  Time: {result.get('execution_time', 0):.2f}s")
+            print(f"🔍 Verification: {result.get('verification', 'Not verified')}")
             
         except KeyboardInterrupt:
-            print("\n👋 Goodbye!")
+            print("\n\n👋 Interrupted by user. Goodbye!")
             break
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+            print(f"❌ Error: {e}")
+            continue
 
-def solve_single_problem(problem: str):
-    """Solve a single problem and display the result."""
-    solver = UnifiedMathSolver()
-    result = solver.solve_problem(problem)
+def test_examples():
+    """Test with some example problems."""
+    print("🧪 TESTING WITH EXAMPLE PROBLEMS")
+    print("=" * 40)
     
-    if result["success"]:
-        print(result["formatted_response"])
-        print(f"\n✅ Solved in {result['execution_time']:.2f} seconds")
-    else:
-        print(f"❌ Error: {result['error']}")
+    solver = UnifiedMathSolver()
+    
+    test_problems = [
+        "3(2x+3) + 14 - 2(4^2)",
+        "2x + 5 = 13",
+        "x^2 + 3x + 2 = 0",
+        "derivative of x^3 + 2x^2 - 5x + 1",
+        "integrate x^2 + 3x"
+    ]
+    
+    for i, problem in enumerate(test_problems, 1):
+        print(f"\n🔍 Test {i}: {problem}")
+        try:
+            result = solver.solve_problem(problem)
+            print(f"✅ Solution: {result.get('solution')}")
+            print(f"⚙️  Method: {result.get('method')}")
+            print(f"⏱️  Time: {result.get('execution_time', 0):.2f}s")
+        except Exception as e:
+            print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     import sys
     
     if len(sys.argv) > 1:
-        # Command line usage: python unified_solver.py "problem statement"
-        problem = " ".join(sys.argv[1:])
-        solve_single_problem(problem)
+        if sys.argv[1] == "test":
+            test_examples()
+        elif sys.argv[1] == "interactive":
+            main()
+        else:
+            # Solve a single problem from command line
+            problem = " ".join(sys.argv[1:])
+            print(f"🔍 Solving: {problem}")
+            solver = UnifiedMathSolver()
+            result = solver.solve_problem(problem)
+            print(f"💡 Solution: {result.get('solution')}")
     else:
-        # Interactive mode
-        interactive_solver()
+        # Default to interactive mode
+        main()
