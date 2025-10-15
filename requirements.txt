@@ -1,0 +1,33 @@
+# Requirements for LLM Agent Research - Templatization Implementation
+# =================================================================
+
+# Core LangChain components
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-openai>=0.0.5
+
+# NLP and text processing
+spacy>=3.6.0
+numpy<2  # Pin to NumPy 1.x for compatibility with spaCy/torch
+
+# Data handling
+pandas>=1.5.0
+
+# API and environment
+python-dotenv>=0.19.0
+
+# Utilities
+typing-extensions>=4.0.0
+
+# Development and testing
+pytest>=7.0.0
+black>=22.0.0
+
+# Optional: for enhanced regex and text processing
+regex>=2022.0.0
+
+# Installation commands:
+# pip install -r requirements.txt
+# python -m spacy download en_core_web_sm
+
+# Note: Set GOOGLE_API_KEY in .env file for Gemini 2.0 Flash

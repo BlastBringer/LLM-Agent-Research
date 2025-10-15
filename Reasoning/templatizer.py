@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 # Try to import spaCy
 try:
     import spacy
@@ -40,10 +44,10 @@ except ImportError:
 try:
     from langchain_core.prompts import PromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openai import ChatOpenAI
     from langchain.schema import BaseOutputParser
     LANGCHAIN_AVAILABLE = True
-    print("✅ LangChain with Gemini available for templatization")
+    print("✅ LangChain with OpenAI available for templatization")
 except ImportError:
     print("⚠️ LangChain not available, using fallback methods")
     LANGCHAIN_AVAILABLE = False
@@ -67,14 +71,15 @@ class WordProblemTemplatizer:
     while maintaining a mapping legend for reconstruction.
     """
     
-    def __init__(self, api_key: str = None, model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: str = None, model: str = None):
         """Initialize the templatizer with optional LangChain support."""
         # Setup logging first
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("MODEL_NAME")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.model = model if model is not None else os.getenv("MODEL_NAME", "google/gemini-2.0-flash-001")
+        self.base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
         self.llm = None
         
         # Initialize counters for generic names
@@ -135,10 +140,11 @@ class WordProblemTemplatizer:
             return
             
         try:
-            self.llm = ChatGoogleGenerativeAI(
+            self.llm = ChatOpenAI(
                 model=self.model,
                 temperature=0.1,  # Low temperature for consistent results
-                google_api_key=self.api_key
+                openai_api_key=self.api_key,
+                openai_api_base=self.base_url
             )
             self.logger.info(f"✅ LangChain LLM initialized: {self.model}")
         except Exception as e:
