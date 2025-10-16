@@ -156,3 +156,8 @@ Word Problem → [🔄 Templatization] → [📝 Parsing] → [🤖 Agent Solvin
 ```
 
 Ready to build the complete mathematical reasoning pipeline! 🚀
+
+
+## Architecture
+
+<img src="C:\Users\Rahul Saravanan\Documents\python\Research\architecture.jpg" alt="Alt text" width="500" height="300" style="border: 2px solid red; border-radius: 5px;">
