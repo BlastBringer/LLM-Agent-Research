@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Reasoning'))
 
 from Reasoning.templatizer import WordProblemTemplatizer, templatize_word_problem, TemplatizationResult
 from Reasoning.parser import MathematicalProblemParser, parse_math_problem, ParseResult
+from Reasoning.variable_extractor import VariableExtractor, extract_variables_from_problem
+from Reasoning.unit_standardizer import UnitStandardizer, standardize_units
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -43,6 +45,8 @@ class WordProblemSolver:
         # Each component is initialized independently
         self.templatizer = WordProblemTemplatizer()
         self.parser = MathematicalProblemParser()
+        self.variable_extractor = VariableExtractor()
+        self.unit_standardizer = UnitStandardizer()
         
         logger.info("✅ Pipeline components initialized")
         logger.info("=" * 60)
@@ -99,6 +103,54 @@ class WordProblemSolver:
                     if eq.description:
                         print(f"       → {eq.description}")
         
+        # Stage 2.5: Variable Extraction
+        if verbose:
+            logger.info("\n" + "=" * 70)
+            logger.info("🔢 STAGE 2.5: VARIABLE EXTRACTION")
+            logger.info("=" * 70)
+        
+        extraction_result = self.variable_extractor.extract_variables(
+            templatization_result.templated_problem,
+            parse_result.all_variables,
+            [eq.equation_string for eq in parse_result.equations]
+        )
+        
+        if verbose:
+            print(f"\n📊 Extraction Method: {extraction_result.extraction_method.upper()}")
+            if extraction_result.variables:
+                print(f"\n🔢 Extracted Variables:")
+                for var_name, var_val in extraction_result.variables.items():
+                    unit_str = f" {var_val.unit}" if var_val.unit else ""
+                    print(f"   {var_name} = {var_val.value}{unit_str}")
+            else:
+                print("\n⚠️  No variables extracted (may be dimensionless)")
+        
+        # Stage 2.6: Unit Standardization
+        if verbose:
+            logger.info("\n" + "=" * 70)
+            logger.info("⚖️ STAGE 2.6: UNIT STANDARDIZATION")
+            logger.info("=" * 70)
+        
+        standardization_result = self.unit_standardizer.standardize_variables(
+            extraction_result.variables
+        )
+        
+        if verbose:
+            print(f"\n📏 Unit System: {standardization_result.unit_system}")
+            
+            if standardization_result.conversions_applied:
+                print(f"\n✅ Conversions Applied:")
+                for conv in standardization_result.conversions_applied:
+                    print(f"   • {conv}")
+            else:
+                print(f"\n✅ No conversions needed (all units already standardized)")
+            
+            if standardization_result.standardized_variables:
+                print(f"\n📊 Standardized Variables:")
+                for var_name, std_qty in standardization_result.standardized_variables.items():
+                    unit_str = f" {std_qty.standardized_unit}" if std_qty.standardized_unit else ""
+                    print(f"   {var_name} = {std_qty.standardized_value}{unit_str}")
+        
         # Stage 3: [Future] Agent Solving
         if verbose:
             logger.info("\n" + "=" * 70)
@@ -127,6 +179,18 @@ class WordProblemSolver:
                 'target_variable': parse_result.target_variable,
                 'equations': [asdict(eq) for eq in parse_result.equations],
                 'confidence': parse_result.confidence_score
+            },
+            'variable_extraction': {
+                'method': extraction_result.extraction_method,
+                'variables': {k: asdict(v) for k, v in extraction_result.variables.items()},
+                'confidence': extraction_result.confidence_score
+            },
+            'unit_standardization': {
+                'unit_system': standardization_result.unit_system,
+                'conversions': standardization_result.conversions_applied,
+                'standardized_variables': {k: asdict(v) for k, v in standardization_result.standardized_variables.items()},
+                'unit_consistency': standardization_result.unit_consistency,
+                'confidence': standardization_result.confidence_score
             },
             # Future stages will be added here
             'solving': {'status': 'not_implemented'},
