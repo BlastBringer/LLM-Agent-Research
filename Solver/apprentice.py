@@ -32,13 +32,22 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
+# Try to import LangChain
 try:
     from langchain_openai import ChatOpenAI
-    from langchain.prompts import PromptTemplate
+    from langchain_core.prompts import PromptTemplate
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
     print("⚠️  LangChain not available. Install with: pip install langchain langchain-openai")
+
+# Try to import Ollama support
+try:
+    from langchain_ollama import ChatOllama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    ChatOllama = None
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -73,25 +82,51 @@ class ApprenticeModel:
         self.logger = logging.getLogger(__name__)
         
         # Configuration
+        self.use_ollama = os.getenv("USE_OLLAMA", "0").lower() in ("1", "true", "yes")
         self.model_name = model_name or os.getenv("APPRENTICE_MODEL", "meta-llama/llama-3-8b-instruct")
+        self.local_model = os.getenv("APPRENTICE_LOCAL_MODEL", "llama3.1:8b")
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         self.temperature = temperature
         
         # Initialize LLM
         self.llm = None
+        self.provider = None
         self._initialize_llm()
         
-        self.logger.info(f"🎓 Apprentice Model initialized: {self.model_name}")
+        self.logger.info(f"🎓 Apprentice Model initialized: {self.provider} - {self.model_name if not self.use_ollama else self.local_model}")
     
     def _initialize_llm(self):
-        """Initialize the LangChain LLM."""
+        """Initialize the LangChain LLM (Ollama or OpenRouter)."""
         if not LANGCHAIN_AVAILABLE:
-            self.logger.error(" LangChain not available")
+            self.logger.error("❌ LangChain not available")
             return
         
+        # Try Ollama first if enabled
+        if self.use_ollama:
+            if not OLLAMA_AVAILABLE:
+                self.logger.warning("⚠️ Ollama support not available. Install: pip install langchain-ollama")
+                self.logger.info("ℹ️  Falling back to OpenRouter...")
+                self.use_ollama = False
+            else:
+                try:
+                    self.llm = ChatOllama(
+                        model=self.local_model,
+                        temperature=self.temperature,
+                        base_url=self.ollama_base_url
+                    )
+                    self.provider = "Ollama (Local)"
+                    self.logger.info(f"✅ Apprentice using Ollama locally: {self.local_model}")
+                    return
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize Ollama: {e}")
+                    self.logger.info("ℹ️  Falling back to OpenRouter...")
+                    self.use_ollama = False
+        
+        # Use OpenRouter if Ollama not enabled or failed
         if not self.api_key:
-            self.logger.error(" No API key found. Set OPENAI_API_KEY in .env")
+            self.logger.error("❌ No API key found. Set OPENAI_API_KEY in .env")
             return
         
         try:
@@ -102,9 +137,10 @@ class ApprenticeModel:
                 openai_api_base=self.base_url,
                 max_tokens=2000
             )
-            self.logger.info(f" LLM initialized successfully : {self.model_name}")
+            self.provider = "OpenRouter (API)"
+            self.logger.info(f"✅ Apprentice using OpenRouter: {self.model_name}")
         except Exception as e:
-            self.logger.error(f"Failed to initialize LLM, please check error: {e}")
+            self.logger.error(f"❌ Failed to initialize LLM: {e}")
             self.llm = None
     
     def solve(self, problem_data: Dict[str, Any]) -> ApprenticeSolution:

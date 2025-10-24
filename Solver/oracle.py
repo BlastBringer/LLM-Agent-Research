@@ -35,16 +35,31 @@ from dotenv import load_dotenv
 
 try:
     from langchain_openai import ChatOpenAI
-    from langchain.agents import AgentExecutor, create_react_agent
-    from langchain.tools import Tool
+    from langchain_core.prompts import PromptTemplate
     from langchain_experimental.utilities import PythonREPL
-    from langchain.prompts import PromptTemplate
     from langchain import hub
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
+    
+    # Try importing agent components (may fail with version conflicts)
+    try:
+        from langchain.agents import AgentExecutor, create_react_agent
+        from langchain.tools import Tool
+        AGENT_AVAILABLE = True
+    except ImportError as agent_err:
+        AGENT_AVAILABLE = False
+        print(f"⚠️  LangChain agents not available (version conflict): {agent_err}")
+        print(f"   Oracle will be disabled. This is OK for simple problems.")
+    
+    LANGCHAIN_AVAILABLE = AGENT_AVAILABLE  # Oracle needs agents
+    
+except ImportError as e:
     LANGCHAIN_AVAILABLE = False
-    print("⚠️  LangChain not fully available. Install with:")
-    print("   pip install langchain langchain-openai langchain-experimental")
+    AGENT_AVAILABLE = False
+    print(f"⚠️  LangChain import error: {e}")
+    print("   Install with: pip install langchain langchain-openai langchain-experimental")
+except Exception as e:
+    LANGCHAIN_AVAILABLE = False
+    AGENT_AVAILABLE = False
+    print(f"❌ Unexpected error importing LangChain: {e}")
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -99,6 +114,7 @@ class OracleModel:
         # Initialize components
         self.llm = None
         self.agent = None
+        self.agent_executor = None  # Initialize to None
         self.tools = []
         
         self._initialize_llm()
@@ -118,14 +134,20 @@ class OracleModel:
             return
         
         try:
+            # Check if using DeepSeek R1 - needs special handling
+            is_deepseek = "deepseek" in self.model_name.lower()
+            
             self.llm = ChatOpenAI(
                 model=self.model_name,
                 temperature=self.temperature,
                 openai_api_key=self.api_key,
                 openai_api_base=self.base_url,
-                max_tokens=4000  # Longer for detailed explanations
+                max_tokens=2000 if is_deepseek else 4000,  # DeepSeek needs token limit
+                timeout=90 if is_deepseek else 60  # DeepSeek can be slower
             )
             self.logger.info(f"✅ Oracle LLM initialized: {self.model_name}")
+            if is_deepseek:
+                self.logger.info("ℹ️  DeepSeek R1 detected - using optimized settings")
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize Oracle LLM: {e}")
             self.llm = None
@@ -161,6 +183,7 @@ class OracleModel:
         """Initialize the ReAct agent."""
         if not self.llm or not self.tools:
             self.logger.warning("⚠️  Cannot initialize agent without LLM and tools")
+            self.agent_executor = None  # Ensure it's set
             return
         
         try:
@@ -230,6 +253,28 @@ Begin! Remember to:
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize agent: {e}")
             self.agent = None
+            self.agent_executor = None  # Ensure it's set on error
+    
+    def _clean_deepseek_output(self, text: str) -> str:
+        """
+        Clean DeepSeek R1 output by removing verbose <think> tags.
+        
+        DeepSeek R1 often includes very long reasoning in <think>...</think> tags.
+        We strip these to get cleaner training data.
+        """
+        if not text:
+            return text
+        
+        # Remove <think> tags and their content
+        cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Remove multiple consecutive newlines
+        cleaned = re.sub(r'\n\s*\n+', '\n\n', cleaned)
+        
+        # Remove leading/trailing whitespace
+        cleaned = cleaned.strip()
+        
+        return cleaned
     
     def solve(self, problem_data: Dict[str, Any]) -> OracleSolution:
         """
@@ -319,6 +364,11 @@ Begin! Remember to:
     ) -> OracleSolution:
         """Parse the oracle's solution into a structured format."""
         
+        # Clean DeepSeek R1 output if needed
+        is_deepseek = "deepseek" in self.model_name.lower()
+        if is_deepseek:
+            output = self._clean_deepseek_output(output)
+        
         # Extract reasoning steps from intermediate steps
         reasoning_steps = []
         tool_calls = []
@@ -334,6 +384,9 @@ Begin! Remember to:
                     thought_match = re.search(r'Thought:(.*?)(?:Action:|$)', log, re.DOTALL)
                     if thought_match:
                         thought = thought_match.group(1).strip()
+                        # Clean DeepSeek verbose output
+                        if is_deepseek:
+                            thought = self._clean_deepseek_output(thought)
                         if thought:
                             reasoning_steps.append(f"Thought: {thought}")
                     
