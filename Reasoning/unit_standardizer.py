@@ -303,6 +303,46 @@ class UnitStandardizer:
         
         self.logger.info(f"✅ Standardization complete: {len(conversions)} conversions applied")
         return result
+    
+    def convert_answer_to_original_units(
+        self,
+        answer_value: float,
+        target_variable: str,
+        standardization_result: StandardizationResult
+    ) -> Tuple[float, str]:
+        """
+        Convert the final answer from SI units back to the original units requested in the problem.
+        
+        Args:
+            answer_value: The answer value in SI units
+            target_variable: The target variable name (e.g., 'distance')
+            standardization_result: The standardization result containing conversion info
+            
+        Returns:
+            Tuple of (converted_value, original_unit)
+        """
+        self.logger.info(f"🔄 Converting answer back to original units for: {target_variable}")
+        
+        # Check if we have standardization info for this variable
+        if target_variable not in standardization_result.standardized_variables:
+            self.logger.warning(f"⚠️ No standardization info for {target_variable}, returning as-is")
+            return answer_value, "unknown"
+        
+        std_quantity = standardization_result.standardized_variables[target_variable]
+        
+        # If no original unit, return as-is
+        if std_quantity.original_unit is None:
+            self.logger.warning(f"⚠️ No original unit found for {target_variable}")
+            return answer_value, std_quantity.standardized_unit
+        
+        # Convert back using the conversion factor
+        # answer in SI / conversion_factor = answer in original units
+        original_value = answer_value / std_quantity.conversion_factor
+        
+        self.logger.info(f"✅ Converted {answer_value} {std_quantity.standardized_unit} → "
+                        f"{original_value} {std_quantity.original_unit}")
+        
+        return original_value, std_quantity.original_unit
 
 
 def standardize_units(variables: Dict[str, Any]) -> StandardizationResult:
