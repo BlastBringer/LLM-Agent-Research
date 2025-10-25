@@ -164,13 +164,23 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
             # Convert to VariableValue objects
             result = {}
             for var_name, data in extracted_data.items():
-                result[var_name] = VariableValue(
-                    name=var_name,
-                    value=float(data["value"]),
-                    unit=data.get("unit"),
-                    raw_text=data.get("text", ""),
-                    confidence=0.9  # High confidence for LLM extraction
-                )
+                # Skip if no value found (e.g., target variable)
+                if data.get("value") is None:
+                    self.logger.debug(f"⏭️  Skipping {var_name} - no value found")
+                    continue
+                    
+                try:
+                    value = float(data["value"])
+                    result[var_name] = VariableValue(
+                        name=var_name,
+                        value=value,
+                        unit=data.get("unit"),
+                        raw_text=data.get("text", ""),
+                        confidence=0.9  # High confidence for LLM extraction
+                    )
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"⚠️  Could not convert {var_name} value to float: {data.get('value')}")
+                    continue
             
             self.logger.info(f"✅ LLM extracted {len(result)} variables")
             return result
@@ -183,26 +193,46 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
         """
         Pattern-based extraction as fallback.
         Returns list of (value, unit, raw_text) tuples.
+        FIXED: Now captures compound units like "miles per hour"
         """
         results = []
         
-        # Pattern: number followed by optional unit
-        # Matches: "5 apples", "120 miles", "2 hours", "$15", "3.5 kg"
+        # Pattern: number followed by optional unit (including compound units)
+        # Matches: "60 miles per hour", "5 dollars per item", "120 miles", "2 hours", "$15"
         patterns = [
-            # Number with unit
-            r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+(?:/[a-zA-Z]+)?)',
+            # Compound units with "per" (e.g., "60 miles per hour")
+            r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+)\s+per\s+([a-zA-Z]+)',
+            # Number with slash unit (e.g., "60 miles/hour")
+            r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+)/([a-zA-Z]+)',
+            # Simple unit (e.g., "120 miles", "2.5 hours")
+            r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+)',
             # Just number (for dimensionless quantities)
             r'(\d+\.?\d*)',
         ]
         
+        seen_positions = set()  # Avoid duplicates from overlapping patterns
+        
         for pattern in patterns:
             matches = re.finditer(pattern, text)
             for match in matches:
+                # Skip if we already captured this position
+                if match.start() in seen_positions:
+                    continue
+                    
                 try:
                     value = float(match.group(1))
-                    unit = match.group(2) if len(match.groups()) > 1 else None
+                    
+                    # Handle compound units (e.g., "miles per hour")
+                    if len(match.groups()) >= 3 and match.group(3):
+                        unit = f"{match.group(2)} per {match.group(3)}"
+                    elif len(match.groups()) >= 2 and match.group(2):
+                        unit = match.group(2)
+                    else:
+                        unit = None
+                    
                     raw_text = match.group(0)
                     results.append((value, unit, raw_text))
+                    seen_positions.add(match.start())
                 except (ValueError, IndexError):
                     continue
         
@@ -216,25 +246,90 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
         equations: List[str]
     ) -> Dict[str, VariableValue]:
         """
-        Map extracted quantities to variable names using heuristics.
-        This is used when LLM extraction fails.
+        Map extracted quantities to variable names using smart semantic matching.
+        FIXED: Now uses semantic matching instead of blind index-based mapping.
         """
         result = {}
         used_quantities = set()
         
-        # Simple heuristic: match based on order and context
-        # This is a fallback, so it's basic
-        for i, var in enumerate(variables):
-            if i < len(quantities) and i not in used_quantities:
-                value, unit, text = quantities[i]
+        self.logger.info(f"🔍 Smart mapping {len(quantities)} quantities to {len(variables)} variables")
+        
+        # For each variable, find the best matching quantity
+        for var in variables:
+            best_match = None
+            best_score = 0
+            best_idx = -1
+            
+            for idx, (value, unit, text) in enumerate(quantities):
+                if idx in used_quantities:
+                    continue
+                
+                score = 0
+                text_lower = text.lower()
+                var_lower = var.lower()
+                
+                # Match by variable name in text (e.g., "speed" in "60 miles per hour")
+                if var_lower in text_lower:
+                    score += 3
+                
+                # Match by semantic understanding of units
+                if unit:
+                    unit_lower = unit.lower()
+                    
+                    # Speed/velocity patterns
+                    if var_lower in ['speed', 'velocity', 'rate']:
+                        if 'per' in unit_lower or '/' in unit_lower:
+                            score += 10  # Strong match for compound units
+                        elif any(dist in unit_lower for dist in ['mile', 'kilometer', 'meter', 'km']):
+                            if any(time in text_lower for time in ['per hour', 'per second', '/h', '/s']):
+                                score += 10
+                    
+                    # Time patterns
+                    elif var_lower in ['time', 'duration', 't']:
+                        if any(t in unit_lower for t in ['hour', 'minute', 'second', 'day', 'h', 's', 'min']):
+                            if 'per' not in unit_lower and '/' not in unit_lower:  # Avoid "miles per hour"
+                                score += 8
+                    
+                    # Distance patterns
+                    elif var_lower in ['distance', 'd', 'length']:
+                        if any(d in unit_lower for d in ['mile', 'kilometer', 'meter', 'km', 'm', 'feet', 'yard']):
+                            if 'per' not in unit_lower and '/' not in unit_lower:  # Simple distance, not speed
+                                score += 8
+                    
+                    # Mass/weight patterns
+                    elif var_lower in ['mass', 'weight', 'w', 'm']:
+                        if any(m in unit_lower for m in ['kilogram', 'gram', 'pound', 'kg', 'g', 'lb', 'oz']):
+                            score += 8
+                    
+                    # Price/cost patterns
+                    elif var_lower in ['price', 'cost', 'money', 'value']:
+                        if any(c in unit_lower for c in ['dollar', 'euro', '$', '€', '£']):
+                            score += 8
+                
+                # Fallback: if variable name partially matches any word in text
+                if any(word in var_lower for word in text_lower.split()):
+                    score += 2
+                
+                self.logger.debug(f"   {var} ← ({value}, {unit}, '{text}'): score={score}")
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = (value, unit, text)
+                    best_idx = idx
+            
+            # Assign best match if found
+            if best_match and best_score > 0:
+                used_quantities.add(best_idx)
                 result[var] = VariableValue(
                     name=var,
-                    value=value,
-                    unit=unit,
-                    raw_text=text,
-                    confidence=0.6  # Lower confidence for pattern matching
+                    value=best_match[0],
+                    unit=best_match[1],
+                    raw_text=best_match[2],
+                    confidence=0.9 if best_score >= 8 else (0.7 if best_score >= 5 else 0.5)
                 )
-                used_quantities.add(i)
+                self.logger.info(f"✅ Mapped {var} ← {best_match[0]} {best_match[1]} (score: {best_score})")
+            else:
+                self.logger.warning(f"⚠️  No match found for variable: {var}")
         
         return result
     

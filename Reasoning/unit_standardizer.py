@@ -109,9 +109,11 @@ class UnitStandardizer:
             'pounds': 'pound', 'lb': 'pound', 'lbs': 'pound', 'ounces': 'ounce', 'oz': 'ounce',
             'tons': 'ton', 'tonnes': 'tonne',
             
-            # Speed
+            # Speed (FIXED: Added "per" variations)
             'mph': 'mile/hour', 'kmh': 'kilometer/hour', 'kph': 'kilometer/hour',
             'mps': 'meter/second', 'm/s': 'meter/second',
+            'miles per hour': 'mile/hour', 'kilometers per hour': 'kilometer/hour',
+            'meters per second': 'meter/second', 'feet per second': 'foot/second',
             
             # Currency (preserve)
             'dollars': 'USD', '$': 'USD', 'usd': 'USD',
@@ -122,12 +124,33 @@ class UnitStandardizer:
         self.logger.info("⚖️ Unit Standardizer initialized")
     
     def normalize_unit_string(self, unit_str: str) -> str:
-        """Normalize unit string to standard form."""
+        """Normalize unit string to standard form. FIXED: Handles compound units."""
         if not unit_str:
             return ''
         
         unit_str = unit_str.strip().lower()
-        return self.unit_aliases.get(unit_str, unit_str)
+        
+        # Direct lookup first
+        if unit_str in self.unit_aliases:
+            return self.unit_aliases[unit_str]
+        
+        # Handle "X per Y" format → "X/Y"
+        if ' per ' in unit_str:
+            parts = unit_str.split(' per ')
+            if len(parts) == 2:
+                numerator = self.unit_aliases.get(parts[0].strip(), parts[0].strip())
+                denominator = self.unit_aliases.get(parts[1].strip(), parts[1].strip())
+                return f"{numerator}/{denominator}"
+        
+        # Handle "X/Y" format
+        if '/' in unit_str:
+            parts = unit_str.split('/')
+            if len(parts) == 2:
+                numerator = self.unit_aliases.get(parts[0].strip(), parts[0].strip())
+                denominator = self.unit_aliases.get(parts[1].strip(), parts[1].strip())
+                return f"{numerator}/{denominator}"
+        
+        return unit_str
     
     def get_dimension(self, unit_str: str) -> str:
         """Determine the dimension of a unit (length, time, mass, etc.)."""
