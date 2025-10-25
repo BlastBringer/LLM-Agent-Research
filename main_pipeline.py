@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
-🚀 MAIN PIPELINE - WORD PROBLEM SOLVER
-======================================
+🚀 MAIN PIPELINE - COMPLETE WORD PROBLEM SOLVER
+================================================
 
-This is the main orchestrator that runs the complete pipeline:
+This is the main orchestrator that runs the COMPLETE pipeline as per architecture:
+
+INFORMATION RETRIEVAL:
 1. Templatization: Convert word problem → generic template + legend
-2. Parsing: Extract equations, variables, and target from template
-3. [Future] Agent: Solve equations step-by-step
-4. [Future] Restoration: Map solution back to original names
+2. Parsing: Extract equations, variables, and target from template  
+3. Variable Extraction: Extract values with units
+4. Unit Standardization: Convert to SI units
 
-Each component is independent and can be run separately.
+SOLVER ARCHITECTURE:
+5. Student Model (Apprentice): Attempts to solve problem
+6. Verifier: Checks answer using SymPy equation solving
+7. Teacher Model (Oracle): Provides correct solution if student fails
+8. Memory Store: Saves oracle solutions for fine-tuning
+
+Each component is independent and can be tested separately.
 """
 
 import sys
@@ -18,14 +26,20 @@ from typing import Dict, Any
 from dataclasses import asdict
 import json
 import logging
+import time
 
-# Add Reasoning module to path
+# Add modules to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Reasoning'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Solver'))
 
+# Import Information Retrieval components
 from Reasoning.templatizer import WordProblemTemplatizer, templatize_word_problem, TemplatizationResult
 from Reasoning.parser import MathematicalProblemParser, parse_math_problem, ParseResult
 from Reasoning.variable_extractor import VariableExtractor, extract_variables_from_problem
 from Reasoning.unit_standardizer import UnitStandardizer, standardize_units
+
+# Import Solver Architecture components
+from Solver.solver_agent import SolverAgent
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -33,40 +47,49 @@ logger = logging.getLogger(__name__)
 
 class WordProblemSolver:
     """
-    Main orchestrator for the word problem solving pipeline.
-    Each component is independent and can be tested separately.
+    Main orchestrator for the COMPLETE word problem solving pipeline.
+    Implements the full architecture from the diagram:
+    - Information Retrieval (Templatization → Parsing → Variable Extraction → Unit Standardization)
+    - Solver Architecture (Student Model → Verifier → Teacher Model)
     """
     
     def __init__(self):
-        """Initialize the pipeline components."""
-        logger.info("🚀 Initializing Word Problem Solver Pipeline")
+        """Initialize ALL pipeline components."""
+        logger.info("🚀 Initializing Complete Word Problem Solver Pipeline")
         logger.info("-" * 60)
         
-        # Each component is initialized independently
+        # Information Retrieval Components
         self.templatizer = WordProblemTemplatizer()
         self.parser = MathematicalProblemParser()
         self.variable_extractor = VariableExtractor()
         self.unit_standardizer = UnitStandardizer()
         
-        logger.info("✅ Pipeline components initialized")
+        # Solver Architecture Components
+        self.solver = SolverAgent()
+        
+        logger.info("✅ All pipeline components initialized")
         logger.info("=" * 60)
     
     def solve(self, problem: str, verbose: bool = True) -> Dict[str, Any]:
         """
-        Run the complete pipeline on a word problem.
+        Run the COMPLETE pipeline on a word problem (as per architecture diagram).
         
         Args:
             problem: The word problem to solve
             verbose: Whether to print detailed steps
             
         Returns:
-            Dictionary containing results from each stage
+            Dictionary containing results from each stage INCLUDING final solution
         """
+        start_time = time.time()
+        
         if verbose:
             logger.info("\n" + "=" * 70)
             logger.info("📝 ORIGINAL PROBLEM")
             logger.info("=" * 70)
             print(f"\n{problem}\n")
+        
+        # ========== INFORMATION RETRIEVAL ==========
         
         # Stage 1: Templatization
         if verbose:
@@ -103,10 +126,10 @@ class WordProblemSolver:
                     if eq.description:
                         print(f"       → {eq.description}")
         
-        # Stage 2.5: Variable Extraction
+        # Stage 3: Variable Extraction
         if verbose:
             logger.info("\n" + "=" * 70)
-            logger.info("🔢 STAGE 2.5: VARIABLE EXTRACTION")
+            logger.info("🔢 STAGE 3: VARIABLE EXTRACTION")
             logger.info("=" * 70)
         
         extraction_result = self.variable_extractor.extract_variables(
@@ -125,10 +148,10 @@ class WordProblemSolver:
             else:
                 print("\n⚠️  No variables extracted (may be dimensionless)")
         
-        # Stage 2.6: Unit Standardization
+        # Stage 4: Unit Standardization
         if verbose:
             logger.info("\n" + "=" * 70)
-            logger.info("⚖️ STAGE 2.6: UNIT STANDARDIZATION")
+            logger.info("⚖️ STAGE 4: UNIT STANDARDIZATION")
             logger.info("=" * 70)
         
         standardization_result = self.unit_standardizer.standardize_variables(
@@ -151,50 +174,104 @@ class WordProblemSolver:
                     unit_str = f" {std_qty.standardized_unit}" if std_qty.standardized_unit else ""
                     print(f"   {var_name} = {std_qty.standardized_value}{unit_str}")
         
-        # Stage 3: [Future] Agent Solving
+        # ========== SOLVER ARCHITECTURE ==========
+        
+        # Stage 5: Solving (Student Model → Verifier → Teacher Model)
         if verbose:
             logger.info("\n" + "=" * 70)
-            logger.info("🤖 STAGE 3: AGENT SOLVING (Coming Soon)")
+            logger.info("🤖 STAGE 5: SOLVER ARCHITECTURE")
             logger.info("=" * 70)
-            print("\n⏳ This stage will use an AI agent to solve the equations step-by-step")
         
-        # Stage 4: [Future] Name Restoration
-        if verbose:
-            logger.info("\n" + "=" * 70)
-            logger.info("🔙 STAGE 4: NAME RESTORATION (Coming Soon)")
-            logger.info("=" * 70)
-            print("\n⏳ This stage will map the solution back to original names using the legend")
-        
-        # Return all results
-        return {
+        # Prepare problem data for solver
+        problem_data = {
             'original_problem': problem,
             'templatization': {
                 'templated_problem': templatization_result.templated_problem,
-                'legend': templatization_result.legend,
-                'confidence': templatization_result.confidence_score
+                'legend': templatization_result.legend
             },
             'parsing': {
-                'problem_type': parse_result.problem_type,
-                'num_equations': parse_result.num_equations_needed,
-                'target_variable': parse_result.target_variable,
                 'equations': [asdict(eq) for eq in parse_result.equations],
-                'confidence': parse_result.confidence_score
+                'target_variable': parse_result.target_variable,
+                'all_variables': parse_result.all_variables
             },
             'variable_extraction': {
                 'method': extraction_result.extraction_method,
-                'variables': {k: asdict(v) for k, v in extraction_result.variables.items()},
-                'confidence': extraction_result.confidence_score
+                'variables': {k: asdict(v) for k, v in extraction_result.variables.items()}
             },
             'unit_standardization': {
                 'unit_system': standardization_result.unit_system,
-                'conversions': standardization_result.conversions_applied,
-                'standardized_variables': {k: asdict(v) for k, v in standardization_result.standardized_variables.items()},
-                'unit_consistency': standardization_result.unit_consistency,
-                'confidence': standardization_result.confidence_score
+                'standardized_variables': {k: asdict(v) for k, v in standardization_result.standardized_variables.items()}
+            }
+        }
+        
+        # Solve with Student Model → Verifier → Teacher Model loop
+        solve_result = self.solver.solve(problem_data, verbose=verbose)
+        
+        # Stage 6: Convert answer back to original units
+        if verbose:
+            logger.info("\n" + "=" * 70)
+            logger.info("� STAGE 6: UNIT CONVERSION (Back to Original)")
+            logger.info("=" * 70)
+        
+        # Convert the final answer from SI units back to original units
+        final_answer_converted, final_unit = self.unit_standardizer.convert_answer_to_original_units(
+            answer_value=solve_result.final_answer,
+            target_variable=parse_result.target_variable,
+            standardization_result=standardization_result
+        )
+        
+        total_time = time.time() - start_time
+        
+        if verbose:
+            print(f"\n✅ Answer in SI units: {solve_result.final_answer}")
+            print(f"✅ Answer in original units: {final_answer_converted} {final_unit}")
+            
+            logger.info("\n" + "=" * 70)
+            logger.info("✅ PIPELINE COMPLETE")
+            logger.info("=" * 70)
+            print(f"\n🎯 Final Answer: {final_answer_converted} {final_unit}")
+            print(f"✅ Verification: {'CORRECT ✓' if solve_result.is_correct else 'NEEDS REVIEW ✗'}")
+            print(f"🧠 Solver Used: {solve_result.solver_used.upper()}")
+            print(f"⏱️  Total Time: {total_time:.2f}s")
+        
+        # Return COMPLETE results (not partial like before)
+        return {
+            'original_problem': problem,
+            'stages': {
+                'templatization': {
+                    'templated_problem': templatization_result.templated_problem,
+                    'legend': templatization_result.legend,
+                    'confidence': templatization_result.confidence_score
+                },
+                'parsing': {
+                    'problem_type': parse_result.problem_type,
+                    'num_equations': parse_result.num_equations_needed,
+                    'target_variable': parse_result.target_variable,
+                    'equations': [asdict(eq) for eq in parse_result.equations],
+                    'confidence': parse_result.confidence_score
+                },
+                'variable_extraction': {
+                    'method': extraction_result.extraction_method,
+                    'variables': {k: asdict(v) for k, v in extraction_result.variables.items()},
+                    'confidence': extraction_result.confidence_score
+                },
+                'unit_standardization': {
+                    'unit_system': standardization_result.unit_system,
+                    'conversions': standardization_result.conversions_applied,
+                    'standardized_variables': {k: asdict(v) for k, v in standardization_result.standardized_variables.items()},
+                    'unit_consistency': standardization_result.unit_consistency,
+                    'confidence': standardization_result.confidence_score
+                }
             },
-            # Future stages will be added here
-            'solving': {'status': 'not_implemented'},
-            'restoration': {'status': 'not_implemented'}
+            'solution': {
+                'final_answer_si': solve_result.final_answer,
+                'final_answer': final_answer_converted,
+                'final_unit': final_unit,
+                'is_correct': solve_result.is_correct,
+                'solver_used': solve_result.solver_used,
+                'confidence': solve_result.confidence,
+                'processing_time': total_time
+            }
         }
 
 def main():

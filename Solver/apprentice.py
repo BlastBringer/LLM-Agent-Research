@@ -234,11 +234,15 @@ GIVEN INFORMATION:
             prompt += f"\nFIND: {target_var}\n"
         
         prompt += """
+⚠️ IMPORTANT: Use ONLY the given standardized values above. Do NOT convert units yourself.
+Your answer must be in the SAME UNITS as the given standardized values (SI units).
+
 INSTRUCTIONS:
 1. Think through the problem step-by-step
 2. Show your work clearly
-3. Use the given equations and values
-4. Calculate the final answer
+3. Use ONLY the given standardized equations and values (do not use values from the original problem text)
+4. Calculate the final answer using the standardized values
+5. Your final answer MUST be a number in SI units (meter, second, kilogram, etc.)
 
 OUTPUT FORMAT (YOU MUST USE THIS EXACT JSON FORMAT):
 ```json
@@ -246,14 +250,17 @@ OUTPUT FORMAT (YOU MUST USE THIS EXACT JSON FORMAT):
   "reasoning_steps": [
     "Step 1: Understand what we're looking for",
     "Step 2: Identify the formula or equation",
-    "Step 3: Substitute the values",
-    "Step 4: Perform the calculation"
+    "Step 3: Substitute the STANDARDIZED values (from GIVEN INFORMATION above)",
+    "Step 4: Perform the calculation in SI units"
   ],
-  "final_answer": <numeric_value>
+  "final_answer": <numeric_value_in_SI_units>
 }
 ```
 
-Now solve the problem. Remember to output ONLY the JSON in the format shown above.
+Now solve the problem. Remember:
+- Use ONLY the standardized values from GIVEN INFORMATION
+- Output ONLY the JSON in the format shown above
+- Your final_answer must be a plain number in SI units
 """
         
         return prompt
