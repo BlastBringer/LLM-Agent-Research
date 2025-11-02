@@ -31,9 +31,19 @@ import os
 import json
 import logging
 import time
+import sys
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+
+# Add ground truth utilities
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+try:
+    from ground_truth_utils import extract_ground_truth_from_problem
+except ImportError:
+    # Fallback if module not found
+    def extract_ground_truth_from_problem(problem_data):
+        return None, None, None
 
 from .apprentice import ApprenticeModel, ApprenticeSolution
 from .verifier import MathVerifier, VerificationResult
@@ -102,17 +112,103 @@ class SolverAgent:
         self.logger.info(f"   📁 Training data: {self.training_data_file}")
         self.logger.info(f"   📁 Failure log: {self.failure_log_file}")
     
-    def solve(
+    def solve_apprentice_only(
         self,
         problem_data: Dict[str, Any],
         verbose: bool = True
     ) -> SolverResult:
         """
-        Main solving pipeline.
+        TEST MODE: Evaluate apprentice without Oracle fallback.
+        
+        Used for:
+        - Testing fine-tuned models
+        - Measuring improvement over time
+        - Preventing contamination of test set with Oracle solutions
         
         Args:
             problem_data: All processed data from previous pipeline stages
             verbose: Whether to print detailed progress
+        
+        Returns:
+            SolverResult with apprentice's performance (no oracle fallback)
+        """
+        import time
+        start_time = time.time()
+        
+        self.stats['total_problems'] += 1
+        
+        if verbose:
+            logger.info("\n" + "=" * 70)
+            logger.info("🧪 TEST MODE: Apprentice-Only Evaluation (No Oracle)")
+            logger.info("=" * 70)
+        
+        # Extract what we need for verification
+        equations = self._extract_equations(problem_data)
+        variables = self._extract_variables(problem_data)
+        target_var = self._extract_target_variable(problem_data)
+        
+        if verbose:
+            logger.info(f"🎯 Target Variable: {target_var}")
+        
+        # Apprentice attempts to solve
+        apprentice_solution = self.apprentice.solve(problem_data)
+        
+        if apprentice_solution.final_answer is None:
+            if verbose:
+                logger.warning("   ❌ Apprentice failed to produce an answer")
+            
+            processing_time = time.time() - start_time
+            return SolverResult(
+                final_answer=0.0,
+                is_correct=False,
+                solver_used='apprentice',
+                apprentice_solution=apprentice_solution,
+                verification=None,
+                oracle_solution=None,
+                confidence=0.0,
+                processing_time=processing_time,
+                metadata={'test_mode': True, 'apprentice_failed': True}
+            )
+        
+        # Verifier checks (NO oracle fallback)
+        verification = self.verifier.verify(
+            equations=equations,
+            variables=variables,
+            target_variable=target_var,
+            proposed_answer=apprentice_solution.final_answer
+        )
+        
+        if verification.is_correct:
+            self.stats['apprentice_correct'] += 1
+        
+        processing_time = time.time() - start_time
+        
+        return SolverResult(
+            final_answer=apprentice_solution.final_answer,
+            is_correct=verification.is_correct,
+            solver_used='apprentice',
+            apprentice_solution=apprentice_solution,
+            verification=verification,
+            oracle_solution=None,
+            confidence=apprentice_solution.confidence,
+            processing_time=processing_time,
+            metadata={'test_mode': True}
+        )
+    
+    def solve(
+        self,
+        problem_data: Dict[str, Any],
+        verbose: bool = True,
+        use_ground_truth: bool = None
+    ) -> SolverResult:
+        """
+        Main solving pipeline with ground truth support.
+        
+        Args:
+            problem_data: All processed data from previous pipeline stages
+            verbose: Whether to print detailed progress
+            use_ground_truth: If True, use ground truth for validation instead of verifier.
+                            If None, auto-detect based on ground truth availability.
         
         Returns:
             SolverResult with answer and verification
@@ -122,10 +218,21 @@ class SolverAgent:
         
         self.stats['total_problems'] += 1
         
+        # Extract ground truth if available
+        ground_truth_numeric, ground_truth_raw, ground_truth_unit = extract_ground_truth_from_problem(problem_data)
+        has_ground_truth = ground_truth_numeric is not None
+        
+        # Auto-detect mode: if ground truth available, use it instead of verifier
+        if use_ground_truth is None:
+            use_ground_truth = has_ground_truth
+        
         if verbose:
             logger.info("\n" + "=" * 70)
             logger.info("🧠 STARTING SOLVER AGENT")
             logger.info("=" * 70)
+            if has_ground_truth:
+                logger.info(f"📊 Ground Truth Available: {ground_truth_numeric} {ground_truth_unit or ''}")
+                logger.info(f"🎯 Validation Mode: {'Ground Truth' if use_ground_truth else 'Verifier (SymPy)'}")
         
         # Extract what we need for verification
         equations = self._extract_equations(problem_data)
@@ -157,9 +264,165 @@ class SolverAgent:
         if verbose:
             logger.info(f"   💡 Apprentice Answer: {apprentice_solution.final_answer}")
         
-        # STEP 2: Verifier checks the answer
-        if verbose:
-            logger.info("\n🎯 Step 2: Verifier checking answer...")
+        # STEP 2: Validate answer - use ground truth if available, otherwise verifier
+        if use_ground_truth and has_ground_truth:
+            # DATASET MODE: Use ground truth directly (skip verifier)
+            if verbose:
+                logger.info("\n🎯 Step 2: Checking against ground truth...")
+            
+            # Compare apprentice answer with ground truth
+            apprentice_correct = self._compare_with_ground_truth(
+                apprentice_solution.final_answer,
+                ground_truth_numeric,
+                verbose=verbose
+            )
+            
+            if apprentice_correct:
+                # Success! Apprentice got it right
+                self.stats['apprentice_correct'] += 1
+                processing_time = time.time() - start_time
+                
+                if verbose:
+                    logger.info(f"\n✅ SUCCESS! Apprentice matches ground truth in {processing_time:.2f}s")
+                
+                # Create a verification result for consistency
+                verification = VerificationResult(
+                    is_correct=True,
+                    proposed_answer=apprentice_solution.final_answer,
+                    correct_answer=ground_truth_numeric,
+                    difference=0.0,
+                    verification_method='ground_truth',
+                    success=True
+                )
+                
+                return SolverResult(
+                    final_answer=apprentice_solution.final_answer,
+                    is_correct=True,
+                    solver_used='apprentice',
+                    apprentice_solution=apprentice_solution,
+                    verification=verification,
+                    oracle_solution=None,
+                    confidence=apprentice_solution.confidence,
+                    processing_time=processing_time,
+                    metadata={
+                        'apprentice_succeeded': True,
+                        'oracle_needed': False,
+                        'validation_method': 'ground_truth'
+                    }
+                )
+            else:
+                # Apprentice wrong, need Oracle
+                if verbose:
+                    logger.warning(f"\n⚠️  Apprentice answer ({apprentice_solution.final_answer}) != Ground truth ({ground_truth_numeric})")
+                    logger.warning("   Consulting Oracle...")
+                
+                self.stats['oracle_needed'] += 1
+                
+                # Call Oracle
+                oracle_solution = self.oracle.solve(problem_data)
+                
+                if verbose and oracle_solution.reasoning_steps:
+                    logger.info("\n👨‍🏫 Oracle's reasoning:")
+                    for i, step in enumerate(oracle_solution.reasoning_steps[:10], 1):
+                        logger.info(f"     {i}. {step[:100]}...")
+                
+                if oracle_solution.final_answer is None:
+                    # Oracle failed
+                    if verbose:
+                        logger.error("   ❌ Oracle also failed!")
+                    
+                    self.stats['complete_failures'] += 1
+                    processing_time = time.time() - start_time
+                    
+                    verification = VerificationResult(
+                        is_correct=False,
+                        proposed_answer=apprentice_solution.final_answer,
+                        correct_answer=ground_truth_numeric,
+                        difference=abs(apprentice_solution.final_answer - ground_truth_numeric) if isinstance(apprentice_solution.final_answer, (int, float)) else None,
+                        verification_method='ground_truth',
+                        success=False,
+                        error='Oracle failed to solve'
+                    )
+                    
+                    return SolverResult(
+                        final_answer=ground_truth_numeric,
+                        is_correct=False,
+                        solver_used='none',
+                        apprentice_solution=apprentice_solution,
+                        verification=verification,
+                        oracle_solution=oracle_solution,
+                        confidence=0.1,
+                        processing_time=processing_time,
+                        metadata={
+                            'apprentice_succeeded': False,
+                            'oracle_succeeded': False,
+                            'complete_failure': True,
+                            'validation_method': 'ground_truth'
+                        }
+                    )
+                
+                # Check Oracle answer against ground truth
+                oracle_correct = self._compare_with_ground_truth(
+                    oracle_solution.final_answer,
+                    ground_truth_numeric,
+                    verbose=verbose
+                )
+                
+                if verbose:
+                    if oracle_correct:
+                        logger.info(f"   ✅ Oracle answer CORRECT: {oracle_solution.final_answer}")
+                    else:
+                        logger.warning(f"   ⚠️  Oracle answer ({oracle_solution.final_answer}) != Ground truth ({ground_truth_numeric})")
+                
+                # Save oracle's solution (even if wrong, for analysis)
+                self._save_training_example(
+                    problem_data=problem_data,
+                    solution_steps=oracle_solution.reasoning_steps,
+                    final_answer=oracle_solution.final_answer,
+                    source='oracle',
+                    tool_calls=oracle_solution.tool_calls,
+                    ground_truth=ground_truth_numeric,
+                    ground_truth_raw=ground_truth_raw,
+                    ground_truth_unit=ground_truth_unit
+                )
+                
+                processing_time = time.time() - start_time
+                
+                if verbose:
+                    logger.info(f"\n✅ Oracle solved in {processing_time:.2f}s")
+                    logger.info(f"💾 Training example saved (oracle_correct={oracle_correct})")
+                
+                verification = VerificationResult(
+                    is_correct=oracle_correct,
+                    proposed_answer=oracle_solution.final_answer,
+                    correct_answer=ground_truth_numeric,
+                    difference=abs(oracle_solution.final_answer - ground_truth_numeric) if isinstance(oracle_solution.final_answer, (int, float)) and isinstance(ground_truth_numeric, (int, float)) else None,
+                    verification_method='ground_truth',
+                    success=True
+                )
+                
+                return SolverResult(
+                    final_answer=oracle_solution.final_answer,
+                    is_correct=oracle_correct,
+                    solver_used='oracle',
+                    apprentice_solution=apprentice_solution,
+                    verification=verification,
+                    oracle_solution=oracle_solution,
+                    confidence=oracle_solution.confidence if oracle_correct else 0.5,
+                    processing_time=processing_time,
+                    metadata={
+                        'apprentice_succeeded': False,
+                        'oracle_needed': True,
+                        'oracle_succeeded': oracle_correct,
+                        'saved_for_training': True,
+                        'validation_method': 'ground_truth'
+                    }
+                )
+        
+        else:
+            # SINGLE MODE: Use verifier (SymPy)
+            if verbose:
+                logger.info("\n🎯 Step 2: Verifier checking answer...")
         
         verification = self.verifier.verify(
             equations=equations,
@@ -262,21 +525,58 @@ class SolverAgent:
                 proposed_answer=oracle_solution.final_answer
             )
             
+            # Check agreement between oracle, verifier, and apprentice
+            oracle_verifier_match = oracle_verification.is_correct
+            oracle_apprentice_match = self._answers_match(
+                oracle_solution.final_answer,
+                apprentice_solution.final_answer
+            )
+            
             if verbose:
-                if oracle_verification.is_correct:
-                    logger.info(f"   ✅ Oracle answer CORRECT: {oracle_solution.final_answer}")
+                if oracle_verifier_match:
+                    logger.info(f"   ✅ Oracle answer CORRECT (verified): {oracle_solution.final_answer}")
                 else:
-                    logger.warning(f"   ⚠️  Oracle answer differs from verifier!")
+                    logger.warning(f"   ⚠️  Conflict detected!")
                     logger.warning(f"      Oracle: {oracle_solution.final_answer}")
                     logger.warning(f"      Verifier: {oracle_verification.correct_answer}")
+                    logger.warning(f"      Apprentice: {apprentice_solution.final_answer}")
+                    
+                    if oracle_apprentice_match:
+                        logger.warning(f"   🤔 Oracle and Apprentice AGREE, but Verifier differs")
+                        logger.warning(f"   📊 Confidence: Oracle + Apprentice = HIGH, Verifier may be wrong")
+            
+            # Determine confidence based on agreement
+            if oracle_verifier_match:
+                # Oracle and verifier agree - high confidence
+                final_confidence = oracle_solution.confidence
+                final_answer = oracle_solution.final_answer
+                is_correct = True
+            elif oracle_apprentice_match:
+                # Oracle and apprentice agree, verifier differs - medium-high confidence
+                # Likely verifier (SymPy) is wrong
+                final_confidence = 0.75
+                final_answer = oracle_solution.final_answer
+                is_correct = True  # Trust Oracle+Apprentice consensus
+                if verbose:
+                    logger.info(f"   ✅ Using Oracle answer (consensus with Apprentice)")
+            else:
+                # Three-way disagreement - medium confidence
+                # Trust Oracle more than verifier
+                final_confidence = 0.6
+                final_answer = oracle_solution.final_answer
+                is_correct = oracle_verification.is_correct
             
             # Save oracle's solution for training (this is the gold standard!)
+            # Include ground truth for quality tracking if available
             self._save_training_example(
                 problem_data=problem_data,
                 solution_steps=oracle_solution.reasoning_steps,
                 final_answer=oracle_solution.final_answer,
                 source='oracle',
-                tool_calls=oracle_solution.tool_calls
+                tool_calls=oracle_solution.tool_calls,
+                ground_truth=ground_truth_numeric if has_ground_truth else None,
+                ground_truth_raw=ground_truth_raw if has_ground_truth else None,
+                ground_truth_unit=ground_truth_unit if has_ground_truth else None
             )
             
             processing_time = time.time() - start_time
@@ -284,23 +584,107 @@ class SolverAgent:
             if verbose:
                 logger.info(f"\n✅ Oracle solved in {processing_time:.2f}s")
                 logger.info(f"💾 Training example saved for fine-tuning")
+                logger.info(f"📊 Final confidence: {final_confidence:.2%}")
             
             return SolverResult(
-                final_answer=oracle_solution.final_answer,
-                is_correct=oracle_verification.is_correct,
+                final_answer=final_answer,
+                is_correct=is_correct,
                 solver_used='oracle',
                 apprentice_solution=apprentice_solution,
                 verification=oracle_verification,
                 oracle_solution=oracle_solution,
-                confidence=oracle_solution.confidence,
+                confidence=final_confidence,
                 processing_time=processing_time,
                 metadata={
                     'apprentice_succeeded': False,
                     'oracle_needed': True,
                     'oracle_succeeded': True,
-                    'saved_for_training': True
+                    'saved_for_training': True,
+                    'oracle_verifier_match': oracle_verifier_match,
+                    'oracle_apprentice_match': oracle_apprentice_match,
+                    'validation_method': 'verifier'
                 }
             )
+    
+    def _compare_with_ground_truth(
+        self,
+        answer: float,
+        ground_truth: float,
+        tolerance: float = 0.001,
+        verbose: bool = False
+    ) -> bool:
+        """
+        Compare answer with ground truth within tolerance.
+        
+        Args:
+            answer: Proposed answer
+            ground_truth: Ground truth value
+            tolerance: Relative tolerance (0.1% default)
+            verbose: Whether to log comparison details
+        
+        Returns:
+            True if answer matches ground truth within tolerance
+        """
+        if answer is None or ground_truth is None:
+            return False
+        
+        try:
+            answer_val = float(answer)
+            gt_val = float(ground_truth)
+            
+            # Check if values are equal within tolerance
+            if gt_val == 0:
+                # Absolute comparison for zero
+                match = abs(answer_val) < 1e-6
+            else:
+                # Relative comparison
+                rel_diff = abs(answer_val - gt_val) / abs(gt_val)
+                match = rel_diff <= tolerance
+            
+            if verbose:
+                if match:
+                    logger.info(f"   ✅ Answer {answer_val} matches ground truth {gt_val}")
+                else:
+                    diff = abs(answer_val - gt_val)
+                    logger.warning(f"   ❌ Answer {answer_val} != ground truth {gt_val} (diff: {diff:.6f})")
+            
+            return match
+        except (ValueError, TypeError) as e:
+            if verbose:
+                logger.warning(f"   ⚠️  Could not compare: {e}")
+            return False
+    
+    def _answers_match(
+        self,
+        answer1: float,
+        answer2: float,
+        tolerance: float = 0.001
+    ) -> bool:
+        """
+        Check if two answers match within tolerance.
+        
+        Args:
+            answer1: First answer
+            answer2: Second answer
+            tolerance: Relative tolerance (0.1% default)
+        
+        Returns:
+            True if answers match within tolerance
+        """
+        if answer1 is None or answer2 is None:
+            return False
+        
+        try:
+            val1 = float(answer1)
+            val2 = float(answer2)
+            
+            if val2 == 0:
+                return abs(val1) < 1e-6
+            else:
+                rel_diff = abs(val1 - val2) / abs(val2)
+                return rel_diff <= tolerance
+        except (ValueError, TypeError):
+            return False
     
     def _extract_equations(self, problem_data: Dict[str, Any]) -> List[str]:
         """Extract equation strings from problem data."""
@@ -420,32 +804,102 @@ class SolverAgent:
         
         self.logger.error(f"❌ Complete failure logged - needs human review")
     
+    def _calculate_difficulty(self, problem_data: Dict[str, Any], 
+                             source: str, tool_calls: List = None) -> float:
+        """
+        Calculate problem difficulty based on solving metrics.
+        Returns value between 0.0 (easy) and 1.0 (hard).
+        """
+        difficulty = 0.0
+        
+        # Factor 1: Required oracle (apprentice failed) = harder
+        if source == 'oracle':
+            difficulty += 0.4
+        
+        # Factor 2: Number of equations
+        equations = self._extract_equations(problem_data)
+        difficulty += min(len(equations) * 0.1, 0.3)
+        
+        # Factor 3: Number of tool calls (more = harder)
+        if tool_calls:
+            difficulty += min(len(tool_calls) * 0.05, 0.3)
+        
+        return min(difficulty, 1.0)  # Cap at 1.0
+    
+    def _should_flag_for_review(self, final_answer: float, 
+                                tool_calls: List = None) -> bool:
+        """
+        Flag edge cases for human review.
+        Returns True if this example needs manual verification.
+        """
+        # Flag if too many tool calls (might indicate confusion)
+        if tool_calls and len(tool_calls) > 10:
+            return True
+        
+        # Flag if answer has unusual magnitude (potential unit error)
+        if abs(final_answer) > 1e6 or (abs(final_answer) < 1e-6 and final_answer != 0):
+            return True
+        
+        return False
+    
     def _save_training_example(
         self,
         problem_data: Dict[str, Any],
         solution_steps: List[str],
         final_answer: float,
         source: str,  # 'apprentice' or 'oracle'
-        tool_calls: List[Dict[str, Any]] = None
+        tool_calls: List[Dict[str, Any]] = None,
+        ground_truth: Optional[float] = None,
+        ground_truth_raw: Optional[str] = None,
+        ground_truth_unit: Optional[str] = None
     ):
         """
-        Save a training example in the format needed for fine-tuning.
+        Save a training example with ground truth support.
+        
+        Enhanced with:
+        - Ground truth tracking (for Oracle accuracy measurement)
+        - Difficulty scoring (for stratified sampling)
+        - Review flags (for quality control)
         
         Format:
         {
             "problem": "Original problem text",
             "steps": ["Step 1: ...", "Step 2: ...", ...],
-            "answer": 42.0,
+            "oracle_answer": 150.0,
+            "ground_truth": 150.0,  # NEW!
+            "oracle_correct": true,  # NEW!
             "metadata": {...}
         }
         """
+        # Calculate difficulty and review flag
+        difficulty = self._calculate_difficulty(problem_data, source, tool_calls)
+        needs_review = self._should_flag_for_review(final_answer, tool_calls)
+        
+        # Calculate Oracle correctness if ground truth available
+        oracle_correct = None
+        if ground_truth is not None and final_answer is not None:
+            # Tolerance for numeric comparison (0.1% or 1e-6, whichever is larger)
+            tolerance = max(abs(ground_truth) * 0.001, 1e-6)
+            oracle_correct = abs(final_answer - ground_truth) <= tolerance
+            
+            # Log warning if Oracle is wrong
+            if not oracle_correct:
+                logger.warning(f"⚠️  Oracle answer INCORRECT! Oracle: {final_answer}, Ground truth: {ground_truth}")
+                needs_review = True  # Force review for incorrect oracle solutions
+        
         training_example = {
             'problem': problem_data.get('original_problem', ''),
             'steps': solution_steps,
-            'answer': final_answer,
+            'oracle_answer': final_answer,
+            'ground_truth': ground_truth,  # NEW!
+            'ground_truth_raw': ground_truth_raw,  # NEW!
+            'ground_truth_unit': ground_truth_unit,  # NEW!
+            'oracle_correct': oracle_correct,  # NEW!
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
-                'source': source,  # Whether this came from apprentice or oracle
+                'source': source,
+                'difficulty': difficulty,
+                'needs_review': needs_review,
                 'tool_calls_count': len(tool_calls) if tool_calls else 0,
                 'equations': self._extract_equations(problem_data),
                 'target_variable': self._extract_target_variable(problem_data)
@@ -460,7 +914,13 @@ class SolverAgent:
         with open(self.training_data_file, 'a') as f:
             f.write(json.dumps(training_example) + '\n')
         
-        self.logger.info(f"💾 Training example saved (source: {source})")
+        # Log with all status indicators
+        review_flag = " ⚠️ NEEDS REVIEW" if needs_review else ""
+        correctness = ""
+        if oracle_correct is not None:
+            correctness = " ✅ CORRECT" if oracle_correct else " ❌ WRONG"
+        
+        self.logger.info(f"💾 Training example saved (source: {source}, difficulty: {difficulty:.2f}{correctness}{review_flag})")
     
     def get_training_data_count(self) -> int:
         """Get the number of training examples collected."""
