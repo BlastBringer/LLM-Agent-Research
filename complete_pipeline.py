@@ -91,7 +91,9 @@ class CompletePipeline:
     def solve_single_problem(
         self,
         problem_text: str,
-        show_verbose: bool = True
+        show_verbose: bool = True,
+        skip_oracle: bool = False,
+        problem_metadata: dict = None
     ) -> Dict[str, Any]:
         """
         Solve a single problem with full verbosity and detailed output.
@@ -99,6 +101,8 @@ class CompletePipeline:
         Args:
             problem_text: The word problem as text
             show_verbose: Whether to show detailed progress
+            skip_oracle: If True, use apprentice-only mode (for testing)
+            problem_metadata: Full problem data dict with ground truth (optional)
         
         Returns:
             Complete results dictionary
@@ -195,8 +199,17 @@ class CompletePipeline:
             }
         }
         
+        # Add ground truth metadata if available
+        if problem_metadata:
+            problem_data['metadata'] = problem_metadata
+        
         # Solve!
-        solve_result = self.solver.solve(problem_data, verbose=show_verbose)
+        if skip_oracle:
+            # TEST MODE: Apprentice-only evaluation
+            solve_result = self.solver.solve_apprentice_only(problem_data, verbose=show_verbose)
+        else:
+            # TRAIN MODE: Full pipeline with Oracle fallback
+            solve_result = self.solver.solve(problem_data, verbose=show_verbose)
         
         # Stage 6: Convert answer back to original units
         if show_verbose:
@@ -292,7 +305,15 @@ class CompletePipeline:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 for i, problem in enumerate(problems):
-                    future = executor.submit(self._solve_single_quiet, problem, i+1)
+                    # Handle both dict format (with metadata) and string format
+                    if isinstance(problem, dict):
+                        problem_text = problem['text']
+                        problem_metadata = problem.get('metadata')
+                    else:
+                        problem_text = problem
+                        problem_metadata = None
+                    
+                    future = executor.submit(self._solve_single_quiet, problem_text, i+1, problem_metadata)
                     futures.append(future)
                 
                 # Collect results
@@ -311,7 +332,15 @@ class CompletePipeline:
             for i, problem in enumerate(problems, 1):
                 logger.info(f"Processing {i}/{len(problems)}...")
                 try:
-                    result = self._solve_single_quiet(problem, i)
+                    # Handle both dict format (with metadata) and string format
+                    if isinstance(problem, dict):
+                        problem_text = problem['text']
+                        problem_metadata = problem.get('metadata')
+                    else:
+                        problem_text = problem
+                        problem_metadata = None
+                    
+                    result = self._solve_single_quiet(problem_text, i, problem_metadata)
                     results.append(result)
                 except Exception as e:
                     logger.error(f"❌ Problem {i} failed: {e}")
@@ -348,7 +377,7 @@ class CompletePipeline:
             'training_data_file': self.solver.training_data_file
         }
     
-    def _solve_single_quiet(self, problem_text: str, problem_num: int) -> Dict[str, Any]:
+    def _solve_single_quiet(self, problem_text: str, problem_num: int, problem_metadata: dict = None) -> Dict[str, Any]:
         """Solve a single problem without verbose output (for batch mode)."""
         try:
             # Quick processing without verbose logs
@@ -377,6 +406,10 @@ class CompletePipeline:
                     }
                 }
             }
+            
+            # Add ground truth metadata if available
+            if problem_metadata:
+                problem_data['metadata'] = problem_metadata
             
             # Solve (non-verbose)
             solve_result = self.solver.solve(problem_data, verbose=False)
@@ -431,9 +464,13 @@ def load_input(input_path: str) -> List[str]:
                 if line.strip():
                     data = json.loads(line)
                     # Extract problem text (try different field names)
-                    problem = data.get('problem') or data.get('question') or data.get('text')
-                    if problem:
-                        problems.append(problem)
+                    problem_text = data.get('input') or data.get('problem') or data.get('question') or data.get('text')
+                    if problem_text:
+                        # Store both text and full metadata for ground truth
+                        problems.append({
+                            'text': problem_text,
+                            'metadata': data  # Keep full data for ground truth extraction
+                        })
         return problems
     
     else:
@@ -526,6 +563,24 @@ Examples:
     parser.add_argument('--quiet', action='store_true',
                        help='Reduce verbosity')
     
+    # NEW: Pipeline mode for train/test/eval
+    parser.add_argument('--pipeline-mode', type=str, default='train',
+                       choices=['train', 'test', 'eval'],
+                       help='Pipeline mode: train (collect oracle data), test (apprentice only), eval (compare both)')
+    parser.add_argument('--skip-oracle', action='store_true',
+                       help='Skip oracle calls (for testing apprentice only)')
+    
+    args = parser.parse_args()
+    
+    # Set pipeline mode behavior
+    if args.pipeline_mode == 'test':
+        logger.info("🧪 TEST MODE: Apprentice-only evaluation (no Oracle calls)")
+        args.skip_oracle = True
+    elif args.pipeline_mode == 'eval':
+        logger.info("📊 EVAL MODE: Comparing Apprentice vs Oracle")
+    else:
+        logger.info("🎓 TRAIN MODE: Collecting Oracle solutions for fine-tuning")
+    
     args = parser.parse_args()
     
     # Load input
@@ -545,7 +600,17 @@ Examples:
             if len(problems) != 1:
                 logger.warning(f"Multiple problems found, using only the first one")
             
-            result = pipeline.solve_single_problem(problems[0], show_verbose=not args.quiet)
+            # Handle both dict format and string format
+            if isinstance(problems[0], dict):
+                problem_text = problems[0]['text']
+                problem_metadata = problems[0].get('metadata')
+            else:
+                problem_text = problems[0]
+                problem_metadata = None
+            
+            result = pipeline.solve_single_problem(problem_text, show_verbose=not args.quiet, 
+                                                   skip_oracle=args.skip_oracle,
+                                                   problem_metadata=problem_metadata)
             save_output(result, args.output)
             
             logger.info("=" * 70)

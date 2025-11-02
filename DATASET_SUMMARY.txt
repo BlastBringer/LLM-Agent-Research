@@ -1,0 +1,94 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                     DATASET FORMAT QUICK REFERENCE                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           🎓 TRAINING DATASET                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Purpose: Collect Oracle solutions for fine-tuning                       │
+│                                                                          │
+│ Required Fields:                                                         │
+│   ✅ input           - Problem text                                     │
+│   ✅ output          - Correct answer (for Oracle accuracy check)       │
+│   ✅ solution_steps  - Step-by-step solution (Oracle learns from this)  │
+│                                                                          │
+│ Example:                                                                 │
+│   {                                                                      │
+│     "input": "A train travels 60 mph for 2.5 hours. How far?",         │
+│     "output": "\\boxed{150}",                                           │
+│     "solution_steps": [                                                  │
+│       "Step 1: distance = speed × time",                                │
+│       "Step 2: distance = 60 × 2.5 = 150 miles"                         │
+│     ]                                                                    │
+│   }                                                                      │
+│                                                                          │
+│ Command:                                                                 │
+│   python complete_pipeline.py --mode dataset \                          │
+│     --input train_data.jsonl --pipeline-mode train                      │
+│                                                                          │
+│ Benefit: +30-50% accuracy improvement with full solutions               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            🧪 TEST DATASET                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Purpose: Evaluate Apprentice model performance                          │
+│                                                                          │
+│ Required Fields:                                                         │
+│   ✅ input   - Problem text                                             │
+│   ✅ output  - Correct answer (for cross-checking predictions)          │
+│   ❌ solution_steps - MUST NOT INCLUDE (prevents cheating!)             │
+│                                                                          │
+│ Example:                                                                 │
+│   {                                                                      │
+│     "input": "A train travels 60 mph for 2.5 hours. How far?",         │
+│     "output": "\\boxed{150}"                                            │
+│   }                                                                      │
+│                                                                          │
+│ Command:                                                                 │
+│   python complete_pipeline.py --mode dataset \                          │
+│     --input test_data.jsonl --pipeline-mode test --skip-oracle          │
+│                                                                          │
+│ What Happens: Model solves alone, answer validated against output       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         COMPARISON TABLE                                 │
+├──────────────┬─────────────────────┬─────────────────────────────────────┤
+│ Aspect       │ Training Dataset    │ Test Dataset                        │
+├──────────────┼─────────────────────┼─────────────────────────────────────┤
+│ input        │ ✅ Required         │ ✅ Required                         │
+│ output       │ ✅ Required         │ ✅ Required                         │
+│ solution_    │ ✅ REQUIRED         │ ❌ MUST NOT INCLUDE                 │
+│   steps      │ (Oracle learns)     │ (prevents cheating)                 │
+├──────────────┼─────────────────────┼─────────────────────────────────────┤
+│ Model        │ Oracle              │ Apprentice only                     │
+│ Pipeline     │ train               │ test --skip-oracle                  │
+│ Output       │ Training data       │ Evaluation metrics                  │
+│ Benefit      │ +30-50% accuracy    │ Fair performance check              │
+└──────────────┴─────────────────────┴─────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      WORKFLOW: PREPARE YOUR DATA                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  1. Start with: AllProblemsCleaned.jsonl (has solution_steps)          │
+│                                                                          │
+│  2. Split:      80% Training (keep solution_steps)                      │
+│                 20% Testing (remove solution_steps)                      │
+│                                                                          │
+│  3. Train:      Use training set with --pipeline-mode train             │
+│                 Oracle learns from solution_steps                        │
+│                                                                          │
+│  4. Test:       Use test set with --pipeline-mode test                  │
+│                 Apprentice solves alone, validated with output           │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+KEY POINTS:
+  • solution_steps = REQUIRED for training (30-50% better learning)
+  • solution_steps = FORBIDDEN for testing (prevents cheating)
+  • output field = ALWAYS required (for validation/checking)
+  • Never use the same dataset for both train and test!
+
+For full details, see: DATASET_FORMAT.md

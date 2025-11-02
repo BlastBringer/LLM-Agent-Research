@@ -161,3 +161,76 @@ Ready to build the complete mathematical reasoning pipeline! 🚀
 ## Architecture
 
 <img src="architecture.jpg" alt="Alt text" width="500" height="300" style="border: 2px solid red; border-radius: 5px;">
+
+---
+
+## 🛡️ Risk Mitigation Features
+
+This pipeline includes comprehensive safeguards against common self-training risks:
+
+### **Implemented Mitigations:**
+
+1. **Distributional Drift Prevention** ✅
+   - Automatic difficulty scoring (0.0-1.0)
+   - Stratified train/validation splits
+   - See: `train_test_split.py`
+
+2. **Quality Assurance** ✅
+   - Automatic flagging for human review
+   - Exact symbolic verification (SymPy)
+   - No approximate numeric matching
+
+3. **Catastrophic Forgetting Prevention** ✅
+   - Separate train/test modes
+   - Validation set isolation
+   - Early stopping support
+
+4. **Style Bias Mitigation** ⚠️ Partial
+   - Provenance metadata tracking
+   - Template randomization (optional)
+
+5. **Spurious Heuristics Prevention** ✅
+   - Algebraic equivalence checking
+   - Strict verifier (no approximations)
+
+👉 **See [RISK_MITIGATION_GUIDE.md](RISK_MITIGATION_GUIDE.md) for complete details**
+
+---
+
+## 📊 Pipeline Modes
+
+### **TRAIN Mode** (Default)
+Collect Oracle solutions for fine-tuning:
+```bash
+python complete_pipeline.py --mode dataset --input data.jsonl --pipeline-mode train
+```
+
+### **TEST Mode**
+Evaluate apprentice without Oracle (prevents contamination):
+```bash
+python complete_pipeline.py --mode dataset --input validation.jsonl --pipeline-mode test
+```
+
+### **EVAL Mode**
+Compare apprentice vs oracle performance:
+```bash
+python complete_pipeline.py --mode dataset --input test.jsonl --pipeline-mode eval
+```
+
+---
+
+## 🔄 Training Workflow
+
+```bash
+# 1. Collect training data
+python complete_pipeline.py --mode dataset --input AllProblemsCleaned.jsonl --pipeline-mode train
+
+# 2. Split data (stratified by difficulty)
+python train_test_split.py --input solver_training_data.jsonl --val-split 0.2
+
+# 3. Fine-tune model (use solver_training_train.jsonl)
+# ... your fine-tuning script ...
+
+# 4. Evaluate on held-out set
+python complete_pipeline.py --mode dataset --input solver_training_val.jsonl --pipeline-mode test
+```
