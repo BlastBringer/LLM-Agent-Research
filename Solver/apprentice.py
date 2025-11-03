@@ -198,11 +198,20 @@ class ApprenticeModel:
         
         # Get variables
         variables = {}
-        if 'unit_standardization' in problem_data:
+        have_standardized = False
+        if 'unit_standardization' in problem_data and problem_data['unit_standardization'].get('standardized_variables'):
             std_vars = problem_data['unit_standardization'].get('standardized_variables', {})
             for var_name, var_data in std_vars.items():
                 value = var_data.get('standardized_value', 0)
                 unit = var_data.get('standardized_unit', '')
+                variables[var_name] = f"{value} {unit}".strip()
+            have_standardized = True
+        elif 'variable_extraction' in problem_data and problem_data['variable_extraction'].get('variables'):
+            ext_vars = problem_data['variable_extraction'].get('variables', {})
+            for var_name, var_data in ext_vars.items():
+                # var_data is dict with keys: value, unit, raw_text, confidence
+                value = var_data.get('value', 0)
+                unit = var_data.get('unit', '') or ''
                 variables[var_name] = f"{value} {unit}".strip()
         
         # Get target variable
@@ -232,35 +241,113 @@ GIVEN INFORMATION:
         
         if target_var:
             prompt += f"\nFIND: {target_var}\n"
-        
-        prompt += """
-⚠️ IMPORTANT: Use ONLY the given standardized values above. Do NOT convert units yourself.
+
+        if have_standardized:
+            prompt += """
+⚠️ IMPORTANT: Use ONLY the standardized values above. Do NOT convert units yourself.
 Your answer must be in the SAME UNITS as the given standardized values (SI units).
 
-INSTRUCTIONS:
-1. Think through the problem step-by-step
-2. Show your work clearly
-3. Use ONLY the given standardized equations and values (do not use values from the original problem text)
-4. Calculate the final answer using the standardized values
-5. Your final answer MUST be a number in SI units (meter, second, kilogram, etc.)
+INSTRUCTIONS FOR SOLVING:
+1. Start by stating what you need to find (the target variable)
+2. Write down the formula or equation you'll use
+3. Substitute the ACTUAL NUMBERS from GIVEN INFORMATION into the equation
+4. Show the arithmetic calculation step-by-step
+5. State the final numerical answer
+
+CRITICAL: Your reasoning_steps MUST show ACTUAL CALCULATIONS with NUMBERS, not generic descriptions!
+
+GOOD EXAMPLE (shows actual math):
+"reasoning_steps": [
+    "We need to find the total time in seconds",
+    "Using formula: time = distance / speed",
+    "Substitute values: time = 120 / 30",
+    "Calculate: 120 ÷ 30 = 4",
+    "Final answer: 4 seconds"
+]
+
+BAD EXAMPLE (too generic - DO NOT DO THIS):
+"reasoning_steps": [
+    "Understand what we're looking for",
+    "Identify the formula or equation", 
+    "Substitute the values",
+    "Perform the calculation"
+]
 
 OUTPUT FORMAT (YOU MUST USE THIS EXACT JSON FORMAT):
 ```json
 {
-  "reasoning_steps": [
-    "Step 1: Understand what we're looking for",
-    "Step 2: Identify the formula or equation",
-    "Step 3: Substitute the STANDARDIZED values (from GIVEN INFORMATION above)",
-    "Step 4: Perform the calculation in SI units"
-  ],
-  "final_answer": <numeric_value_in_SI_units>
+    "reasoning_steps": [
+        "State what we're solving for: [target variable in context]",
+        "Formula: [actual equation with variable names]",
+        "Substitute: [equation with actual numbers from GIVEN INFORMATION]",
+        "Calculate: [show arithmetic with numbers, e.g., 63 ÷ 13 = 4.846]",
+        "Apply: [if multi-step, show next calculation, e.g., 4.846 × 39 = 189]",
+        "Result: [final answer with unit]"
+    ],
+    "final_answer": <numeric_value_in_SI_units>
 }
 ```
 
-Now solve the problem. Remember:
-- Use ONLY the standardized values from GIVEN INFORMATION
+CRITICAL REMINDERS:
+- SHOW ACTUAL NUMBERS in every reasoning step (not placeholders like [value] or [calculation])
+- Write out arithmetic: "63 ÷ 13 = 4.846" not "divide the values"
+- Use ONLY standardized values from GIVEN INFORMATION above
+- If multiple steps, show each calculation explicitly
 - Output ONLY the JSON in the format shown above
-- Your final_answer must be a plain number in SI units
+"""
+        else:
+            prompt += """
+⚠️ IMPORTANT: Use ONLY the given values above. Keep units consistent if present; do not invent conversions.
+
+INSTRUCTIONS FOR SOLVING:
+1. Start by stating what you need to find (the target variable)
+2. Write down the formula or equation you'll use
+3. Substitute the ACTUAL NUMBERS from GIVEN INFORMATION into the equation
+4. Show the arithmetic calculation step-by-step with actual numbers
+5. State the final numerical answer
+
+CRITICAL: Your reasoning_steps MUST show ACTUAL CALCULATIONS with NUMBERS, not generic descriptions!
+
+GOOD EXAMPLE (shows actual math):
+"reasoning_steps": [
+    "We need to find the total time in minutes",
+    "For rate problems, first find rate: rate = time_per_segment / distance_per_segment",
+    "Substitute: rate = 63 minutes / 13 miles",
+    "Calculate rate: 63 ÷ 13 = 4.846 minutes per mile",
+    "Apply rate to total distance: time = rate × total_distance = 4.846 × 39 miles",
+    "Calculate: 4.846 × 39 = 189.0 minutes",
+    "Final answer: 189.0 minutes"
+]
+
+BAD EXAMPLE (too generic - DO NOT DO THIS):
+"reasoning_steps": [
+    "Understand what we're looking for",
+    "Identify the formula",
+    "Substitute the values", 
+    "Perform the calculation"
+]
+
+OUTPUT FORMAT (YOU MUST USE THIS EXACT JSON FORMAT):
+```json
+{
+    "reasoning_steps": [
+        "State what we're solving for: [target variable in context]",
+        "Formula needed: [actual equation with variable names]",
+        "Substitute: [equation with actual numbers from GIVEN INFORMATION]",
+        "Calculate: [show arithmetic with numbers, e.g., 63 ÷ 13 = 4.846]",
+        "Apply (if multi-step): [next calculation, e.g., 4.846 × 39 = 189.0]",
+        "Result: [final answer with unit if applicable]"
+    ],
+    "final_answer": <numeric_value>
+}
+```
+
+CRITICAL REMINDERS:
+- SHOW ACTUAL NUMBERS in every reasoning step (not placeholders)
+- Write out arithmetic: "63 ÷ 13 = 4.846" not "divide the values"
+- For rate problems: ALWAYS calculate rate first, then apply it (show both calculations)
+- Use ONLY values from GIVEN INFORMATION above
+- Output ONLY the JSON in the format shown above
 """
         
         return prompt
@@ -311,13 +398,44 @@ Now solve the problem. Remember:
             if final_answer is not None:
                 final_answer = float(final_answer)
             
+            # Quality check: Warn if reasoning is too generic
+            confidence = 0.9
+            if reasoning_steps:
+                generic_indicators = [
+                    'understand what',
+                    'identify the formula',
+                    'substitute the values',
+                    'perform the calculation',
+                    '[target]',
+                    '[formula',
+                    '[show',
+                    '[value'
+                ]
+                generic_count = sum(
+                    1 for step in reasoning_steps 
+                    for indicator in generic_indicators 
+                    if indicator.lower() in step.lower()
+                )
+                # Check if any step contains actual numbers
+                has_numbers = any(
+                    re.search(r'\d+\.?\d*\s*[÷×+\-=/]\s*\d+\.?\d*', step) 
+                    for step in reasoning_steps
+                )
+                
+                if generic_count >= 3 or not has_numbers:
+                    self.logger.warning("⚠️  Reasoning steps appear too generic (no actual calculations shown)")
+                    confidence = 0.6
+            
             return ApprenticeSolution(
                 final_answer=final_answer,
                 reasoning_steps=reasoning_steps,
                 raw_response=response,
                 extraction_method='json',
-                confidence=0.9,
-                metadata={'parsed_successfully': True}
+                confidence=confidence,
+                metadata={
+                    'parsed_successfully': True,
+                    'has_detailed_reasoning': confidence >= 0.9
+                }
             )
             
         except Exception as e:

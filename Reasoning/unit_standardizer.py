@@ -37,7 +37,32 @@ load_dotenv()
 # Pint for unit conversions
 try:
     import pint
+    # Define a custom unit registry
     ureg = pint.UnitRegistry()
+    
+    # Add custom currency definition
+    # This prevents errors like "'USD' is not defined in the unit registry"
+    ureg.define('dollar = [currency]')
+    ureg.define('USD = dollar')
+    ureg.define('dollars = dollar')
+    
+    # Common time aliases
+    ureg.define('hr = hour')
+    ureg.define('hrs = hour')
+    ureg.define('mins = minute')
+    ureg.define('sec = second')
+    ureg.define('secs = second')
+    
+    # Common speed aliases
+    ureg.define('kph = kilometer / hour')
+    ureg.define('kmph = kilometer / hour')
+    ureg.define('mps = meter / second')
+    ureg.define('kmps = kilometer / second')
+    
+    # Common distance aliases
+    ureg.define('kilometres = kilometer')
+    ureg.define('metres = meter')
+    
     PINT_AVAILABLE = True
     print("✅ Pint library available for unit conversions")
 except ImportError:

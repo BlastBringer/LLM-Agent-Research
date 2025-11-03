@@ -6,4 +6,5 @@ __pycache__/
 *.pyd
 .env
 .DS_Store
-scripts/
+scripts/demo
+scripts/test

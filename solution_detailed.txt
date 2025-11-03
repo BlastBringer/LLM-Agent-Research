@@ -1,0 +1,30 @@
+======================================================================
+MATH PROBLEM SOLUTION
+======================================================================
+
+PROBLEM:
+Isabella is popping popcorn for a snack. As the pan of kernels heats up, the kernels start popping faster. 20 pop in the first 18 seconds of cooking, then 3 times that amount in the next 18 seconds. The kernels increase to 4 times the initial popping rate in the next 18 seconds, but in the final 18 seconds, the popping slows down to half the rate as the past 18 seconds. After Isabella takes the pan off the heat, a quarter of the number of kernels that popped in the final 18 seconds of cooking also pop from the residual heat. How many pieces of popcorn does Isabella have to eat?
+
+======================================================================
+SOLUTION:
+======================================================================
+
+Final Answer: 235.0
+Verification: ⚠️ NEEDS REVIEW
+Solver Used: apprentice
+Confidence: 90.00%
+
+REASONING STEPS:
+----------------------------------------------------------------------
+1. State what we're solving for: total number of popcorn pieces
+2. Formula needed: total_popcorn = initial_popping + second_popping + third_popping + fourth_popping + residual_popping
+3. Substitute: total_popcorn = 20 + (3 * 20) + (4 * 20) + (0.5 * (4 * 20)) + (0.25 * (0.5 * (4 * 20)))
+4. Calculate: total_popcorn = 20 + 60 + 80 + 40 + 15
+5. Calculate: total_popcorn = 235
+6. Result: total_popcorn = 235
+
+======================================================================
+METADATA:
+======================================================================
+Processing Time: 93.25s
+Timestamp: 2025-11-03T18:30:41.972173

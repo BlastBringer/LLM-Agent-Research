@@ -33,13 +33,17 @@ import logging
 import time
 import sys
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 
 # Add ground truth utilities
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 try:
-    from ground_truth_utils import extract_ground_truth_from_problem
+    from ground_truth_utils import (
+        extract_ground_truth_from_problem,
+        extract_interval_from_problem,
+        parse_interval_expression,
+    )
 except ImportError:
     # Fallback if module not found
     def extract_ground_truth_from_problem(problem_data):
@@ -103,7 +107,10 @@ class SolverAgent:
         # Statistics
         self.stats = {
             'total_problems': 0,
+            'gt_numeric_available': 0,
+            'gt_interval_available': 0,
             'apprentice_correct': 0,
+            'interval_correct': 0,
             'oracle_needed': 0,
             'complete_failures': 0
         }
@@ -115,7 +122,8 @@ class SolverAgent:
     def solve_apprentice_only(
         self,
         problem_data: Dict[str, Any],
-        verbose: bool = True
+        verbose: bool = True,
+        use_ground_truth: bool = True
     ) -> SolverResult:
         """
         TEST MODE: Evaluate apprentice without Oracle fallback.
@@ -128,6 +136,7 @@ class SolverAgent:
         Args:
             problem_data: All processed data from previous pipeline stages
             verbose: Whether to print detailed progress
+            use_ground_truth: If True, use ground truth validation (for dataset mode)
         
         Returns:
             SolverResult with apprentice's performance (no oracle fallback)
@@ -137,10 +146,23 @@ class SolverAgent:
         
         self.stats['total_problems'] += 1
         
+        # Extract ground truth if available
+        ground_truth_numeric, ground_truth_raw, ground_truth_unit = extract_ground_truth_from_problem(problem_data)
+        has_ground_truth = ground_truth_numeric is not None
+        
+        # Use ground truth if available and requested
+        if use_ground_truth is None:
+            use_ground_truth = has_ground_truth
+        if has_ground_truth:
+            self.stats['gt_numeric_available'] += 1
+        
         if verbose:
             logger.info("\n" + "=" * 70)
             logger.info("🧪 TEST MODE: Apprentice-Only Evaluation (No Oracle)")
             logger.info("=" * 70)
+            if has_ground_truth and use_ground_truth:
+                logger.info(f"📊 Ground Truth Available: {ground_truth_numeric} {ground_truth_unit or ''}")
+                logger.info(f"🎯 Validation: Ground Truth Comparison")
         
         # Extract what we need for verification
         equations = self._extract_equations(problem_data)
@@ -158,25 +180,80 @@ class SolverAgent:
                 logger.warning("   ❌ Apprentice failed to produce an answer")
             
             processing_time = time.time() - start_time
+            
+            # Create verification result
+            verification = VerificationResult(
+                is_correct=False,
+                proposed_answer=None,
+                correct_answer=ground_truth_numeric if has_ground_truth else None,
+                difference=None,
+                verification_method='ground_truth' if (has_ground_truth and use_ground_truth) else 'verifier'
+            )
+            
             return SolverResult(
-                final_answer=0.0,
+                final_answer=ground_truth_numeric if has_ground_truth else 0.0,
                 is_correct=False,
                 solver_used='apprentice',
                 apprentice_solution=apprentice_solution,
-                verification=None,
+                verification=verification,
                 oracle_solution=None,
                 confidence=0.0,
                 processing_time=processing_time,
                 metadata={'test_mode': True, 'apprentice_failed': True}
             )
         
-        # Verifier checks (NO oracle fallback)
-        verification = self.verifier.verify(
-            equations=equations,
-            variables=variables,
-            target_variable=target_var,
-            proposed_answer=apprentice_solution.final_answer
-        )
+        # Validate answer: use ground truth for dataset mode, verifier for single mode
+        if use_ground_truth:
+            # DATASET MODE: Ground truth comparison
+            if has_ground_truth:
+                is_correct = self._compare_with_ground_truth(
+                    apprentice_solution.final_answer,
+                    ground_truth_numeric,
+                    verbose=verbose
+                )
+                verification = VerificationResult(
+                    is_correct=is_correct,
+                    proposed_answer=apprentice_solution.final_answer,
+                    correct_answer=ground_truth_numeric,
+                    difference=abs(apprentice_solution.final_answer - ground_truth_numeric) if isinstance(apprentice_solution.final_answer, (int, float)) and isinstance(ground_truth_numeric, (int, float)) else None,
+                    verification_method='ground_truth'
+                )
+            else:
+                # Try interval-based ground truth
+                gt_intervals = extract_interval_from_problem(problem_data)
+                if gt_intervals:
+                    self.stats['gt_interval_available'] += 1
+                    # Parse apprentice's response for intervals
+                    app_intervals = parse_interval_expression(apprentice_solution.raw_response or '')
+                    interval_match = self._intervals_equal(app_intervals, gt_intervals)
+                    if interval_match:
+                        self.stats['interval_correct'] += 1
+                    verification = VerificationResult(
+                        is_correct=interval_match,
+                        proposed_answer=apprentice_solution.final_answer,
+                        correct_answer=None,
+                        difference=None,
+                        verification_method='ground_truth_interval'
+                    )
+                else:
+                    # No ground truth available, mark as incorrect and move on (DO NOT use verifier)
+                    if verbose:
+                        logger.warning("   ⚠️ No ground truth found (numeric or interval), cannot verify.")
+                    verification = VerificationResult(
+                        is_correct=False,
+                        proposed_answer=apprentice_solution.final_answer,
+                        correct_answer=None,
+                        difference=None,
+                        verification_method='ground_truth_unavailable'
+                    )
+        else:
+            # SINGLE MODE: Verifier checks
+            verification = self.verifier.verify(
+                equations=equations,
+                variables=variables,
+                target_variable=target_var,
+                proposed_answer=apprentice_solution.final_answer
+            )
         
         if verification.is_correct:
             self.stats['apprentice_correct'] += 1
@@ -192,7 +269,7 @@ class SolverAgent:
             oracle_solution=None,
             confidence=apprentice_solution.confidence,
             processing_time=processing_time,
-            metadata={'test_mode': True}
+            metadata={'test_mode': True, 'validation_method': verification.verification_method}
         )
     
     def solve(
@@ -285,14 +362,24 @@ class SolverAgent:
                 if verbose:
                     logger.info(f"\n✅ SUCCESS! Apprentice matches ground truth in {processing_time:.2f}s")
                 
+                # Save apprentice's correct solution for training (ground truth-backed)
+                self._save_training_example(
+                    problem_data=problem_data,
+                    solution_steps=apprentice_solution.reasoning_steps,
+                    final_answer=apprentice_solution.final_answer,
+                    source='apprentice',
+                    ground_truth=ground_truth_numeric,
+                    ground_truth_raw=ground_truth_raw,
+                    ground_truth_unit=ground_truth_unit
+                )
+
                 # Create a verification result for consistency
                 verification = VerificationResult(
                     is_correct=True,
                     proposed_answer=apprentice_solution.final_answer,
                     correct_answer=ground_truth_numeric,
                     difference=0.0,
-                    verification_method='ground_truth',
-                    success=True
+                    verification_method='ground_truth'
                 )
                 
                 return SolverResult(
@@ -339,9 +426,7 @@ class SolverAgent:
                         proposed_answer=apprentice_solution.final_answer,
                         correct_answer=ground_truth_numeric,
                         difference=abs(apprentice_solution.final_answer - ground_truth_numeric) if isinstance(apprentice_solution.final_answer, (int, float)) else None,
-                        verification_method='ground_truth',
-                        success=False,
-                        error='Oracle failed to solve'
+                        verification_method='ground_truth'
                     )
                     
                     return SolverResult(
@@ -374,17 +459,39 @@ class SolverAgent:
                     else:
                         logger.warning(f"   ⚠️  Oracle answer ({oracle_solution.final_answer}) != Ground truth ({ground_truth_numeric})")
                 
-                # Save oracle's solution (even if wrong, for analysis)
-                self._save_training_example(
-                    problem_data=problem_data,
-                    solution_steps=oracle_solution.reasoning_steps,
-                    final_answer=oracle_solution.final_answer,
-                    source='oracle',
-                    tool_calls=oracle_solution.tool_calls,
-                    ground_truth=ground_truth_numeric,
-                    ground_truth_raw=ground_truth_raw,
-                    ground_truth_unit=ground_truth_unit
-                )
+                if oracle_correct:
+                    # Save oracle's correct solution for training
+                    self._save_training_example(
+                        problem_data=problem_data,
+                        solution_steps=oracle_solution.reasoning_steps,
+                        final_answer=oracle_solution.final_answer,
+                        source='oracle',
+                        tool_calls=oracle_solution.tool_calls,
+                        ground_truth=ground_truth_numeric,
+                        ground_truth_raw=ground_truth_raw,
+                        ground_truth_unit=ground_truth_unit
+                    )
+                else:
+                    # Both apprentice and oracle wrong → fallback to dataset solution_steps if available
+                    meta = problem_data.get('metadata') or {}
+                    ds_steps = meta.get('solution_steps')
+                    if ds_steps:
+                        # Save dataset-provided steps as training signal for future fine-tuning
+                        self._save_training_example(
+                            problem_data=problem_data,
+                            solution_steps=ds_steps if isinstance(ds_steps, list) else [str(ds_steps)],
+                            final_answer=ground_truth_numeric,
+                            source='dataset',
+                            tool_calls=None,
+                            ground_truth=ground_truth_numeric,
+                            ground_truth_raw=ground_truth_raw,
+                            ground_truth_unit=ground_truth_unit
+                        )
+                        if verbose:
+                            logger.info("   💾 Stored dataset-provided solution_steps (both models incorrect)")
+                    else:
+                        if verbose:
+                            logger.info("   📝 No dataset solution_steps available to store")
                 
                 processing_time = time.time() - start_time
                 
@@ -397,8 +504,7 @@ class SolverAgent:
                     proposed_answer=oracle_solution.final_answer,
                     correct_answer=ground_truth_numeric,
                     difference=abs(oracle_solution.final_answer - ground_truth_numeric) if isinstance(oracle_solution.final_answer, (int, float)) and isinstance(ground_truth_numeric, (int, float)) else None,
-                    verification_method='ground_truth',
-                    success=True
+                    verification_method='ground_truth'
                 )
                 
                 return SolverResult(
@@ -414,7 +520,7 @@ class SolverAgent:
                         'apprentice_succeeded': False,
                         'oracle_needed': True,
                         'oracle_succeeded': oracle_correct,
-                        'saved_for_training': True,
+                        'saved_for_training': bool(oracle_correct),
                         'validation_method': 'ground_truth'
                     }
                 )
@@ -890,7 +996,7 @@ class SolverAgent:
         training_example = {
             'problem': problem_data.get('original_problem', ''),
             'steps': solution_steps,
-            'oracle_answer': final_answer,
+            'final_answer': final_answer,
             'ground_truth': ground_truth,  # NEW!
             'ground_truth_raw': ground_truth_raw,  # NEW!
             'ground_truth_unit': ground_truth_unit,  # NEW!
@@ -932,14 +1038,22 @@ class SolverAgent:
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get solver statistics."""
-        if self.stats['total_problems'] > 0:
-            accuracy = (self.stats['apprentice_correct'] / self.stats['total_problems']) * 100
+        # Compute accuracy over comparable problems (with numeric ground truth)
+        denom_num = self.stats.get('gt_numeric_available', 0)
+        if denom_num > 0:
+            accuracy = (self.stats['apprentice_correct'] / denom_num) * 100
         else:
             accuracy = 0.0
+        denom_int = self.stats.get('gt_interval_available', 0)
+        if denom_int > 0:
+            interval_accuracy = (self.stats['interval_correct'] / denom_int) * 100
+        else:
+            interval_accuracy = 0.0
         
         return {
             **self.stats,
             'apprentice_accuracy': accuracy,
+            'interval_accuracy': interval_accuracy,
             'oracle_usage_rate': (self.stats['oracle_needed'] / max(1, self.stats['total_problems'])) * 100,
             'training_examples_collected': self.get_training_data_count()
         }
@@ -952,13 +1066,46 @@ class SolverAgent:
         print("📊 SOLVER STATISTICS")
         print("=" * 70)
         print(f"Total Problems Solved: {stats['total_problems']}")
-        print(f"Apprentice Correct: {stats['apprentice_correct']}")
+        print(f"Apprentice Correct: {stats['apprentice_correct']} (over {stats['gt_numeric_available']} comparable problems)")
+        print(f"Interval Correct: {stats['interval_correct']} (over {stats['gt_interval_available']} comparable problems)")
         print(f"Oracle Needed: {stats['oracle_needed']}")
         print(f"Complete Failures: {stats['complete_failures']}")
         print(f"\nApprentice Accuracy: {stats['apprentice_accuracy']:.1f}%")
+        print(f"Interval Accuracy: {stats['interval_accuracy']:.1f}%")
         print(f"Oracle Usage Rate: {stats['oracle_usage_rate']:.1f}%")
         print(f"\n💾 Training Examples Collected: {stats['training_examples_collected']}")
         print("=" * 70)
+
+    def _intervals_equal(self, a: Optional[List[Dict[str, Union[float, bool]]]], 
+                         b: Optional[List[Dict[str, Union[float, bool]]]], tol: float = 1e-9) -> bool:
+        """Compare two lists of intervals for equality within tolerance."""
+        if not a or not b:
+            return False
+        if len(a) != len(b):
+            return False
+        def key(iv):
+            return (iv['start'], iv['end'], iv['include_start'], iv['include_end'])
+        def norm(lst):
+            return sorted([
+                {
+                    'start': float(iv['start']),
+                    'end': float(iv['end']),
+                    'include_start': bool(iv['include_start']),
+                    'include_end': bool(iv['include_end'])
+                } for iv in lst
+            ], key=key)
+        a_n = norm(a)
+        b_n = norm(b)
+        for x, y in zip(a_n, b_n):
+            if (abs(x['start'] - y['start']) if all(map(lambda v: abs(v) != float('inf'), [x['start'], y['start']])) else 0.0) > tol:
+                return False
+            if (abs(x['end'] - y['end']) if all(map(lambda v: abs(v) != float('inf'), [x['end'], y['end']])) else 0.0) > tol:
+                return False
+            if x['include_start'] != y['include_start']:
+                return False
+            if x['include_end'] != y['include_end']:
+                return False
+        return True
 
 
 if __name__ == "__main__":
