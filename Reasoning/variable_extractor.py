@@ -111,7 +111,13 @@ class VariableExtractor:
         
         prompt_template = PromptTemplate(
             input_variables=["problem", "variables"],
-            template="""You are a mathematical variable extractor. Given a word problem and a list of variables, extract the numerical value and unit for each variable.
+            template="""You are a mathematical variable extractor. Given a word problem and a list of variables, extract ALL numerical values from the problem text.
+
+IMPORTANT: 
+- Extract EVERY number mentioned in the problem
+- DO NOT skip the target variable - just mark it as "unknown" 
+- Pay special attention to rate problems (e.g., "X per Y" or "X every Y")
+- Extract intermediate quantities too (not just final givens)
 
 Problem:
 {problem}
@@ -119,26 +125,40 @@ Problem:
 Variables to find: {variables}
 
 For each variable, identify:
-1. Its numerical value
-2. Its unit (if any)
+1. Its numerical value (or null if it's what we're solving for)
+2. Its unit (if any) - BE PRECISE with compound units like "miles per hour" or "minutes per mile"
 3. The exact text where you found it
 
 Return ONLY a JSON object in this format:
 {{
   "variable_name": {{
-    "value": <number>,
+    "value": <number or null>,
     "unit": "<unit or null>",
-    "text": "<original text>"
+    "text": "<original text or 'unknown'>"
   }}
 }}
 
-Example:
+Examples:
+
+Example 1 - Rate Problem:
+Problem: "A fog bank takes 63 minutes to cover every 13 miles. If the city is 39 miles across, how many minutes will it take?"
+Variables: ["time_per_distance", "distance_covered", "total_distance", "total_time"]
+Response:
+{{
+  "time_per_distance": {{"value": 63, "unit": "minutes", "text": "63 minutes"}},
+  "distance_covered": {{"value": 13, "unit": "miles", "text": "13 miles"}},
+  "total_distance": {{"value": 39, "unit": "miles", "text": "39 miles"}},
+  "total_time": {{"value": null, "unit": "minutes", "text": "unknown"}}
+}}
+
+Example 2 - Simple:
 Problem: "A train travels 120 miles in 2 hours."
-Variables: ["distance", "time"]
+Variables: ["distance", "time", "speed"]
 Response:
 {{
   "distance": {{"value": 120, "unit": "miles", "text": "120 miles"}},
-  "time": {{"value": 2, "unit": "hours", "text": "2 hours"}}
+  "time": {{"value": 2, "unit": "hours", "text": "2 hours"}},
+  "speed": {{"value": null, "unit": "miles per hour", "text": "unknown"}}
 }}
 
 Now extract for the given problem. Return ONLY the JSON, no explanation."""
@@ -193,13 +213,17 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
         """
         Pattern-based extraction as fallback.
         Returns list of (value, unit, raw_text) tuples.
-        FIXED: Now captures compound units like "miles per hour"
+        ENHANCED: Captures compound units, "X every Y", "X to Y", and context
         """
         results = []
         
         # Pattern: number followed by optional unit (including compound units)
-        # Matches: "60 miles per hour", "5 dollars per item", "120 miles", "2 hours", "$15"
+        # Matches: "60 miles per hour", "63 minutes to cover every 13 miles", "120 miles", "$15"
         patterns = [
+            # Rate with "to cover every" or "to travel" (e.g., "63 minutes to cover every 13 miles")
+            r'(\d+\.?\d*)\s*([a-zA-Z]+)\s+to\s+(?:cover|travel)\s+(?:every\s+)?(\d+\.?\d*)\s*([a-zA-Z]+)',
+            # Compound units with "every" (e.g., "63 minutes every 13 miles")
+            r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+)\s+every\s+(\d+\.?\d*)\s*([a-zA-Z]+)',
             # Compound units with "per" (e.g., "60 miles per hour")
             r'(\d+\.?\d*)\s*([a-zA-Z$€£¥]+)\s+per\s+([a-zA-Z]+)',
             # Number with slash unit (e.g., "60 miles/hour")
@@ -212,7 +236,7 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
         
         seen_positions = set()  # Avoid duplicates from overlapping patterns
         
-        for pattern in patterns:
+        for pattern_idx, pattern in enumerate(patterns):
             matches = re.finditer(pattern, text)
             for match in matches:
                 # Skip if we already captured this position
@@ -220,6 +244,19 @@ Now extract for the given problem. Return ONLY the JSON, no explanation."""
                     continue
                     
                 try:
+                    # Handle "X every Y" or "X to cover every Y" patterns (captures 2 quantities)
+                    if pattern_idx in [0, 1] and len(match.groups()) >= 4:
+                        value1 = float(match.group(1))
+                        unit1 = match.group(2)
+                        value2 = float(match.group(3))
+                        unit2 = match.group(4)
+                        
+                        # Add both quantities
+                        results.append((value1, unit1, f"{value1} {unit1}"))
+                        results.append((value2, unit2, f"{value2} {unit2}"))
+                        seen_positions.add(match.start())
+                        continue
+                    
                     value = float(match.group(1))
                     
                     # Handle compound units (e.g., "miles per hour")

@@ -44,6 +44,7 @@ from Reasoning.parser import MathematicalProblemParser
 from Reasoning.variable_extractor import VariableExtractor
 from Reasoning.unit_standardizer import UnitStandardizer
 from Solver.solver_agent import SolverAgent
+from ground_truth_utils import extract_ground_truth_from_problem
 
 # For parallel processing
 try:
@@ -66,9 +67,10 @@ class CompletePipeline:
     Complete end-to-end pipeline from raw problem text to solution.
     """
     
-    def __init__(self, verbose: bool = True):
+    def __init__(self, verbose: bool = True, disable_unit_standardization: bool = False):
         """Initialize all pipeline components."""
         self.verbose = verbose
+        self.disable_unit_standardization = disable_unit_standardization
         
         if verbose:
             logger.info("=" * 70)
@@ -98,6 +100,10 @@ class CompletePipeline:
         """
         Solve a single problem with full verbosity and detailed output.
         
+        VALIDATION STRATEGY (per architecture diagram):
+        - SINGLE MODE: Uses SymPy verifier to check apprentice's answer
+        - This ensures the verifier logic is tested and used as designed
+        
         Args:
             problem_text: The word problem as text
             show_verbose: Whether to show detailed progress
@@ -111,7 +117,7 @@ class CompletePipeline:
         
         if show_verbose:
             logger.info("=" * 70)
-            logger.info("🔵 SINGLE PROBLEM MODE")
+            logger.info("🔵 SINGLE PROBLEM MODE (Validation: SymPy Verifier)")
             logger.info("=" * 70)
             logger.info(f"📝 Problem: {problem_text[:100]}...")
             logger.info("")
@@ -158,20 +164,23 @@ class CompletePipeline:
         if show_verbose:
             logger.info(f"✅ Variables extracted: {len(extraction_result.variables)}")
         
-        # Stage 4: Unit Standardization
-        if show_verbose:
-            logger.info("")
-            logger.info("=" * 70)
-            logger.info("⚖️ STAGE 4: UNIT STANDARDIZATION")
-            logger.info("=" * 70)
-        
-        standardization_result = self.unit_standardizer.standardize_variables(
-            extraction_result.variables
-        )
-        
-        if show_verbose:
-            logger.info(f"✅ Unit system: {standardization_result.unit_system}")
-            logger.info(f"📊 Conversions: {len(standardization_result.conversions_applied)}")
+        # Stage 4: Unit Standardization (optional)
+        if not self.disable_unit_standardization:
+            if show_verbose:
+                logger.info("")
+                logger.info("=" * 70)
+                logger.info("⚖️ STAGE 4: UNIT STANDARDIZATION")
+                logger.info("=" * 70)
+            
+            standardization_result = self.unit_standardizer.standardize_variables(
+                extraction_result.variables
+            )
+            
+            if show_verbose:
+                logger.info(f"✅ Unit system: {standardization_result.unit_system}")
+                logger.info(f"📊 Conversions: {len(standardization_result.conversions_applied)}")
+        else:
+            standardization_result = None
         
         # Stage 5: Solving
         if show_verbose:
@@ -191,13 +200,20 @@ class CompletePipeline:
                 'equations': [asdict(eq) for eq in parse_result.equations],
                 'target_variable': parse_result.target_variable,
                 'all_variables': parse_result.all_variables
-            },
-            'unit_standardization': {
+            }
+        }
+        # Include unit standardization if enabled
+        if standardization_result is not None:
+            problem_data['unit_standardization'] = {
                 'standardized_variables': {
                     k: asdict(v) for k, v in standardization_result.standardized_variables.items()
                 }
             }
-        }
+        else:
+            # Provide variable extraction to solver when standardization is disabled
+            problem_data['variable_extraction'] = {
+                'variables': {k: asdict(v) for k, v in extraction_result.variables.items()}
+            }
         
         # Add ground truth metadata if available
         if problem_metadata:
@@ -206,28 +222,35 @@ class CompletePipeline:
         # Solve!
         if skip_oracle:
             # TEST MODE: Apprentice-only evaluation
+            if show_verbose:
+                logger.info("")
+                logger.info("=" * 70)
+                logger.info("🧪 APPRENTICE-ONLY MODE (Oracle Disabled)")
+                logger.info("=" * 70)
             solve_result = self.solver.solve_apprentice_only(problem_data, verbose=show_verbose)
         else:
             # TRAIN MODE: Full pipeline with Oracle fallback
-            solve_result = self.solver.solve(problem_data, verbose=show_verbose)
+            # IMPORTANT: For single mode, always use verifier (not ground truth)
+            solve_result = self.solver.solve(problem_data, verbose=show_verbose, use_ground_truth=False)
         
-        # Stage 6: Convert answer back to original units
-        if show_verbose:
-            logger.info("")
-            logger.info("=" * 70)
-            logger.info("🔄 STAGE 6: UNIT CONVERSION (Back to Original)")
-            logger.info("=" * 70)
-        
-        # Convert the final answer from SI units back to original units
-        final_answer_converted, final_unit = self.unit_standardizer.convert_answer_to_original_units(
-            answer_value=solve_result.final_answer,
-            target_variable=parse_result.target_variable,
-            standardization_result=standardization_result
-        )
-        
-        if show_verbose:
-            logger.info(f"✅ Answer in SI units: {solve_result.final_answer}")
-            logger.info(f"✅ Answer in original units: {final_answer_converted} {final_unit}")
+        # Stage 6: Convert answer back to original units (only if standardization enabled)
+        if not self.disable_unit_standardization and standardization_result is not None:
+            if show_verbose:
+                logger.info("")
+                logger.info("=" * 70)
+                logger.info("🔄 STAGE 6: UNIT CONVERSION (Back to Original)")
+                logger.info("=" * 70)
+            final_answer_converted, final_unit = self.unit_standardizer.convert_answer_to_original_units(
+                answer_value=solve_result.final_answer,
+                target_variable=parse_result.target_variable,
+                standardization_result=standardization_result
+            )
+            if show_verbose:
+                logger.info(f"✅ Answer in SI units: {solve_result.final_answer}")
+                logger.info(f"✅ Answer in original units: {final_answer_converted} {final_unit}")
+        else:
+            final_answer_converted = solve_result.final_answer
+            final_unit = 'unknown'
         
         # Calculate total time
         total_time = time.time() - start_time
@@ -250,7 +273,9 @@ class CompletePipeline:
                 'templatization': asdict(templatization_result),
                 'parsing': asdict(parse_result),
                 'variable_extraction': asdict(extraction_result),
-                'unit_standardization': asdict(standardization_result)
+                'unit_standardization': asdict(standardization_result) if standardization_result is not None else {
+                    'standardized_variables': {}
+                }
             },
             'solution': {
                 'final_answer_si': solve_result.final_answer,  # Answer in SI units
@@ -272,27 +297,55 @@ class CompletePipeline:
         self,
         problems: List[str],
         batch_size: int = 10,
-        use_parallel: bool = True
+        use_parallel: bool = True,
+        skip_oracle: bool = False
     ) -> Dict[str, Any]:
         """
         Batch process multiple problems from a dataset.
         Uses parallel processing for speed.
         
+        VALIDATION STRATEGY (per architecture diagram):
+        - DATASET MODE: Uses ground truth from 'output' column for validation
+        - Skips SymPy verifier since we have correct answers
+        - This is more reliable and faster for training data collection
+        
         Args:
-            problems: List of problem texts
+            problems: List of problem texts (or dicts with 'text' and 'metadata')
             batch_size: Number of problems to process in parallel
             use_parallel: Whether to use parallel processing
+            skip_oracle: If True, only use apprentice (for testing/evaluation)
         
         Returns:
             Summary statistics
         """
         logger.info("=" * 70)
-        logger.info("🔵 DATASET MODE - BATCH PROCESSING")
+        mode_desc = "Apprentice-Only Testing" if skip_oracle else "Training with Oracle Fallback"
+        logger.info(f"🔵 DATASET MODE ({mode_desc} | Validation: Ground Truth)")
         logger.info("=" * 70)
         logger.info(f"📊 Total problems: {len(problems)}")
         logger.info(f"⚡ Batch size: {batch_size}")
         logger.info(f"🔧 Parallel: {use_parallel and PARALLEL_AVAILABLE}")
         logger.info("")
+        
+        # Suppress verbose logging from sub-modules during batch processing
+        # Save original log levels
+        original_levels = {}
+        modules_to_quiet = [
+            'Reasoning.templatizer',
+            'Reasoning.parser', 
+            'Reasoning.variable_extractor',
+            'Reasoning.unit_standardizer',
+            'Solver.apprentice',
+            'Solver.oracle',
+            'Solver.verifier',
+            'Solver.solver_agent',
+            'httpx'
+        ]
+        
+        for module_name in modules_to_quiet:
+            module_logger = logging.getLogger(module_name)
+            original_levels[module_name] = module_logger.level
+            module_logger.setLevel(logging.WARNING)  # Only show warnings and errors
         
         start_time = time.time()
         results = []
@@ -313,24 +366,23 @@ class CompletePipeline:
                         problem_text = problem
                         problem_metadata = None
                     
-                    future = executor.submit(self._solve_single_quiet, problem_text, i+1, problem_metadata)
+                    future = executor.submit(self._solve_single_quiet, problem_text, i+1, problem_metadata, skip_oracle)
                     futures.append(future)
                 
-                # Collect results
-                for future in futures:
+                # Collect results with progress updates
+                for i, future in enumerate(futures, 1):
                     try:
                         result = future.result(timeout=300)  # 5 min timeout per problem
                         results.append(result)
                         
-                        if len(results) % 10 == 0:
-                            logger.info(f"✅ Processed: {len(results)}/{len(problems)}")
+                        # Show progress every problem
+                        logger.info(f"✅ Progress: {i}/{len(problems)} ({(i/len(problems)*100):.1f}%)")
                     except Exception as e:
                         logger.error(f"❌ Problem failed: {e}")
                         results.append({'error': str(e)})
         else:
             # Sequential processing
             for i, problem in enumerate(problems, 1):
-                logger.info(f"Processing {i}/{len(problems)}...")
                 try:
                     # Handle both dict format (with metadata) and string format
                     if isinstance(problem, dict):
@@ -340,13 +392,18 @@ class CompletePipeline:
                         problem_text = problem
                         problem_metadata = None
                     
-                    result = self._solve_single_quiet(problem_text, i, problem_metadata)
+                    result = self._solve_single_quiet(problem_text, i, problem_metadata, skip_oracle)
                     results.append(result)
+                    logger.info(f"✅ Progress: {i}/{len(problems)} ({(i/len(problems)*100):.1f}%)")
                 except Exception as e:
                     logger.error(f"❌ Problem {i} failed: {e}")
                     results.append({'error': str(e)})
         
         total_time = time.time() - start_time
+        
+        # Restore original logging levels
+        for module_name, level in original_levels.items():
+            logging.getLogger(module_name).setLevel(level)
         
         # Calculate statistics
         successful = sum(1 for r in results if 'error' not in r)
@@ -374,11 +431,22 @@ class CompletePipeline:
             'failed': failed,
             'total_time': total_time,
             'avg_time_per_problem': avg_time,
-            'training_data_file': self.solver.training_data_file
+            'training_data_file': self.solver.training_data_file,
+            'results': results
         }
     
-    def _solve_single_quiet(self, problem_text: str, problem_num: int, problem_metadata: dict = None) -> Dict[str, Any]:
-        """Solve a single problem without verbose output (for batch mode)."""
+    def _solve_single_quiet(self, problem_text: str, problem_num: int, problem_metadata: dict = None, skip_oracle: bool = False) -> Dict[str, Any]:
+        """
+        Solve a single problem without verbose output (for batch/dataset mode).
+        
+        This uses GROUND TRUTH validation (not SymPy verifier) since it's for dataset mode.
+        
+        Args:
+            problem_text: The problem text
+            problem_num: Problem number for tracking
+            problem_metadata: Full problem data with ground truth
+            skip_oracle: If True, only use apprentice (for testing)
+        """
         try:
             # Quick processing without verbose logs
             templatization_result = self.templatizer.templatize_problem(problem_text)
@@ -388,9 +456,12 @@ class CompletePipeline:
                 parse_result.all_variables,
                 [eq.equation_string for eq in parse_result.equations]
             )
-            standardization_result = self.unit_standardizer.standardize_variables(
-                extraction_result.variables
-            )
+            if not self.disable_unit_standardization:
+                standardization_result = self.unit_standardizer.standardize_variables(
+                    extraction_result.variables
+                )
+            else:
+                standardization_result = None
             
             # Prepare for solver
             problem_data = {
@@ -400,34 +471,62 @@ class CompletePipeline:
                     'target_variable': parse_result.target_variable,
                     'all_variables': parse_result.all_variables
                 },
-                'unit_standardization': {
+            }
+            if standardization_result is not None:
+                problem_data['unit_standardization'] = {
                     'standardized_variables': {
                         k: asdict(v) for k, v in standardization_result.standardized_variables.items()
                     }
                 }
-            }
+            else:
+                problem_data['variable_extraction'] = {
+                    'variables': {k: asdict(v) for k, v in extraction_result.variables.items()}
+                }
+            
             
             # Add ground truth metadata if available
             if problem_metadata:
                 problem_data['metadata'] = problem_metadata
             
             # Solve (non-verbose)
-            solve_result = self.solver.solve(problem_data, verbose=False)
+            # IMPORTANT: For dataset mode, always use ground truth validation (not verifier)
+            if skip_oracle:
+                # TEST MODE: Apprentice-only evaluation with ground truth
+                solve_result = self.solver.solve_apprentice_only(problem_data, verbose=False, use_ground_truth=True)
+            else:
+                # TRAIN MODE: Full pipeline with Oracle fallback
+                solve_result = self.solver.solve(problem_data, verbose=False, use_ground_truth=True)
             
             # Convert answer back to original units
-            final_answer_converted, final_unit = self.unit_standardizer.convert_answer_to_original_units(
-                answer_value=solve_result.final_answer,
-                target_variable=parse_result.target_variable,
-                standardization_result=standardization_result
-            )
+            if standardization_result is not None:
+                final_answer_converted, final_unit = self.unit_standardizer.convert_answer_to_original_units(
+                    answer_value=solve_result.final_answer,
+                    target_variable=parse_result.target_variable,
+                    standardization_result=standardization_result
+                )
+            else:
+                final_answer_converted, final_unit = solve_result.final_answer, 'unknown'
             
+            # Extract ground truth (from top-level or metadata)
+            gt_numeric, gt_raw, gt_unit = extract_ground_truth_from_problem(problem_data)
+            
+            # Build enriched result payload for JSONL
             return {
                 'problem_num': problem_num,
+                'input': problem_text,
+                'ground_truth_raw': gt_raw,
+                'ground_truth_numeric': gt_numeric,
+                'ground_truth_unit': gt_unit,
                 'answer_si': solve_result.final_answer,  # Answer in SI units
                 'answer': final_answer_converted,  # Answer in original units
                 'unit': final_unit,
                 'correct': solve_result.is_correct,
-                'solver': solve_result.solver_used
+                'verification_method': getattr(solve_result.verification, 'verification_method', 'unknown'),
+                'difference': getattr(solve_result.verification, 'difference', None),
+                'solver': solve_result.solver_used,
+                'apprentice_confidence': solve_result.confidence,
+                'apprentice_reasoning_steps': (solve_result.apprentice_solution.reasoning_steps if solve_result.apprentice_solution else []),
+                'apprentice_raw_response': (solve_result.apprentice_solution.raw_response if solve_result.apprentice_solution else None)
             }
         except Exception as e:
             logger.error(f"Problem {problem_num} error: {e}")
@@ -562,6 +661,8 @@ Examples:
                        help='Disable parallel processing')
     parser.add_argument('--quiet', action='store_true',
                        help='Reduce verbosity')
+    parser.add_argument('--limit', type=int, default=None,
+                       help='Limit number of problems to process (for testing)')
     
     # NEW: Pipeline mode for train/test/eval
     parser.add_argument('--pipeline-mode', type=str, default='train',
@@ -569,6 +670,8 @@ Examples:
                        help='Pipeline mode: train (collect oracle data), test (apprentice only), eval (compare both)')
     parser.add_argument('--skip-oracle', action='store_true',
                        help='Skip oracle calls (for testing apprentice only)')
+    parser.add_argument('--no-unit-standardization', action='store_true',
+                       help='Disable unit standardization stage (use raw variable extraction)')
     
     args = parser.parse_args()
     
@@ -581,18 +684,23 @@ Examples:
     else:
         logger.info("🎓 TRAIN MODE: Collecting Oracle solutions for fine-tuning")
     
-    args = parser.parse_args()
     
     # Load input
     try:
         problems = load_input(args.input)
-        logger.info(f"✅ Loaded {len(problems)} problem(s) from {args.input}")
+        
+        # Apply limit if specified
+        if args.limit and args.limit > 0:
+            problems = problems[:args.limit]
+            logger.info(f"✅ Loaded {len(problems)} problem(s) from {args.input} (limited from dataset)")
+        else:
+            logger.info(f"✅ Loaded {len(problems)} problem(s) from {args.input}")
     except Exception as e:
         logger.error(f"❌ Failed to load input: {e}")
         return 1
     
     # Initialize pipeline
-    pipeline = CompletePipeline(verbose=not args.quiet)
+    pipeline = CompletePipeline(verbose=not args.quiet, disable_unit_standardization=args.no_unit_standardization)
     
     try:
         if args.mode == 'single':
@@ -622,8 +730,18 @@ Examples:
             stats = pipeline.solve_dataset(
                 problems,
                 batch_size=args.batch_size,
-                use_parallel=not args.no_parallel
+                use_parallel=not args.no_parallel,
+                skip_oracle=args.skip_oracle
             )
+            
+            # Save results to JSONL if specified
+            if args.output and args.output.endswith('.jsonl'):
+                logger.info(f"💾 Saving results to: {args.output}")
+                import json
+                with open(args.output, 'w') as f:
+                    for result in stats.get('results', []):
+                        f.write(json.dumps(result) + '\n')
+                logger.info(f"✅ Results saved: {len(stats.get('results', []))} problems to {args.output}")
             
             logger.info("=" * 70)
             logger.info("✅ DATASET MODE COMPLETE")

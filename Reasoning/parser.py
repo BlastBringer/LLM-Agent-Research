@@ -153,44 +153,65 @@ Think step-by-step and provide a detailed analysis:
 
 1. **UNDERSTAND THE PROBLEM**: What is being asked? What information is given?
 
-2. **IDENTIFY VARIABLES**: List all the variables/unknowns in this problem. Use the placeholder names from the template (e.g., [Person1], [Item1]) or create appropriate variable names.
+2. **IDENTIFY VARIABLES**: List ALL variables/unknowns in this problem, including:
+   - Given values (numbers provided in the problem)
+   - Intermediate quantities (calculated in steps)
+   - Target variable (what we're solving for)
+   Use descriptive names (e.g., "rate", "time_per_unit", "total_distance")
 
-3. **COUNT EQUATIONS NEEDED**: How many independent equations are needed to solve this problem completely? Consider:
-   - Simple problems: 1 equation (e.g., "x + 5 = 10")
-   - Problems with multiple unknowns: Multiple equations (e.g., system of equations)
-   - Sequential problems: May need intermediate equations
+3. **COUNT EQUATIONS NEEDED**: How many steps/equations are needed? Consider:
+   - Rate problems: Usually need 2 steps (find rate, then apply rate)
+   - Multi-step word problems: Count the calculation stages
+   - Example: "takes 63 min to cover every 13 miles, city is 39 miles" → 2 equations:
+     1. rate = 63 / 13 (minutes per mile)
+     2. total_time = rate * 39
 
-4. **FORMULATE EQUATIONS**: Write out each equation in mathematical notation. Be precise.
+4. **FORMULATE EQUATIONS IN ORDER**: Write equations in the order they must be solved:
+   - List dependencies clearly
+   - Use descriptive variable names that match step 2
+   - For rate problems: first equation finds the rate, second applies it
 
 5. **IDENTIFY TARGET VARIABLE**: Which variable must be solved to answer the question?
 
-6. **CLASSIFY PROBLEM TYPE**: What type of math problem is this? (linear equation, system of equations, rate problem, percentage, etc.)
+6. **CLASSIFY PROBLEM TYPE**: What type of math problem is this?
+   - rate_problem: involves speed, rate, or "X per Y" / "X every Y"
+   - multi_step: requires intermediate calculations
+   - system_of_equations: simultaneous equations
+   - linear_equation: single equation
+   - proportion: ratio/proportion problem
 
 Provide your analysis in this JSON format:
 {{
     "understanding": "Brief description of what the problem asks",
     "variables": [
-        {{"name": "variable_name", "description": "what this represents", "unit": "unit if applicable"}}
+        {{"name": "descriptive_variable_name", "description": "what this represents", "unit": "unit if applicable", "is_given": true/false, "is_target": true/false}}
     ],
-    "num_equations_needed": <number>,
+    "num_equations_needed": <number of steps/equations>,
     "equations": [
         {{
-            "equation": "mathematical equation string",
-            "description": "what this equation represents",
-            "type": "equation type",
-            "variables": ["list", "of", "variables"]
+            "equation": "mathematical equation with descriptive variable names",
+            "description": "what this equation calculates (e.g., 'find rate in minutes per mile')",
+            "type": "rate_calculation / application / etc",
+            "variables": ["list", "of", "variables"],
+            "order": <1, 2, 3... to indicate solving sequence>
         }}
     ],
     "target_variable": "variable_to_solve",
     "target_description": "what this variable represents in the context",
-    "problem_type": "type of problem",
+    "problem_type": "rate_problem / multi_step / linear_equation / system_of_equations / proportion / etc",
     "difficulty": "easy/medium/hard",
     "constraints": ["any constraints or conditions"],
-    "reasoning": ["step 1", "step 2", "..."],
+    "reasoning": ["step 1: find X", "step 2: use X to find Y", "..."],
     "confidence": 0.95
 }}
 
-Be precise and mathematical. Extract equations that can actually be solved.
+CRITICAL: For rate problems (X per Y, X every Y), ensure you:
+- Create a variable for the rate (e.g., "rate_per_unit")
+- Create equation 1 to calculate the rate
+- Create equation 2 to apply the rate
+- List equations in proper order
+
+Be precise and mathematical. Extract equations that can actually be solved step-by-step.
 """
         )
         

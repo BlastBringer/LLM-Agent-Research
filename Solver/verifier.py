@@ -43,10 +43,17 @@ class VerificationResult:
     correct_answer: float
     proposed_answer: float
     difference: float
-    solution_steps: List[str]
-    verification_method: str  # 'sympy', 'numpy', or 'eval'
-    confidence: float
-    metadata: Dict[str, Any]
+    verification_method: str  # 'sympy', 'numpy', 'eval', or 'ground_truth'
+    solution_steps: List[str] = None  # Optional: steps taken to verify
+    confidence: float = 1.0  # Optional: confidence in verification (default 1.0)
+    metadata: Dict[str, Any] = None  # Optional: additional metadata
+
+    def __post_init__(self):
+        """Initialize optional fields with defaults."""
+        if self.solution_steps is None:
+            self.solution_steps = []
+        if self.metadata is None:
+            self.metadata = {}
 
 
 class MathVerifier:
