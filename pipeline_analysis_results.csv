@@ -1,0 +1,28 @@
+Metric,Value
+Total Problems Evaluated,1316
+Overall Accuracy,92.63%
+──────────────────────────────,
+Oracle Calls,400
+Oracle Call Rate,30.40%
+Oracle Success Rate,87.75%
+Oracle Success Count,351
+Oracle Failure Count,49
+──────────────────────────────,
+Agreement Cases,915
+Agreement Accuracy,94.86%
+Agreement Success Count,868
+──────────────────────────────,
+Oracle Tiebreaker Cases,400
+Oracle Tiebreaker Accuracy,87.75%
+──────────────────────────────,
+CoT-Only Cases,1
+CoT-Only Accuracy,0.00%
+──────────────────────────────,
+PoT-Only Cases,0
+PoT-Only Accuracy,0.00%
+──────────────────────────────,
+Oracle Fallback Cases,0
+Oracle Fallback Accuracy,0.00%
+──────────────────────────────,
+Oracle Fixed Both Methods,96
+Oracle Called but Method Correct,268
