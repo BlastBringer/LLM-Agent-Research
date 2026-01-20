@@ -1,15 +1,23 @@
-# .gitignore
+# Environments
 myenv/
+.env
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
-.DS_Store
-scripts/demo
-scripts/test
+
+
+
+# Data / experiments
 datasets/
-scripts/oldScripts
-scripts/PoT_testing
 Solver/
-scripts/oldScripts
+FinalResults/
+TestResults/
+
+# Scripts (non-final)
+scripts/demo/
+scripts/test/
+scripts/oldScripts/
+scripts/PoT_testing/
