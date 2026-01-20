@@ -21,7 +21,7 @@ from collections import Counter
 from langchain_openai import ChatOpenAI
 
 # Set OpenRouter API key
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = ""
 
 # 8-shot CoT examples for Oracle (same as dual solver)
 COT_EXAMPLES = """Q: Janet's ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?
