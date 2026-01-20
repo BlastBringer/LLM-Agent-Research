@@ -73,7 +73,7 @@ class BareLLMBenchmark:
     
     def __init__(self, model_name: str = None, temperature: float = 0.1):
         """Initialize the bare LLM."""
-        self.model_name = model_name or os.getenv("APPRENTICE_MODEL", "meta-llama/llama-3.1-8b-instruct")
+        self.model_name = model_name or os.getenv("APPRENTICE_MODEL", "meta-llama/llama-3.2-3b-instruct")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
         self.temperature = temperature

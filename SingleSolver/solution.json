@@ -1,0 +1,126 @@
+{
+  "question": "Isabella is popping popcorn for a snack. As the pan of kernels heats up, the kernels start popping faster. 20 pop in the first 18 seconds of cooking, then 3 times that amount in the next 18 seconds. The kernels increase to 4 times the initial popping rate in the next 18 seconds, but in the final 18 seconds, the popping slows down to half the rate as the past 18 seconds. After Isabella takes the pan off the heat, a quarter of the number of kernels that popped in the final 18 seconds of cooking also pop from the residual heat. How many pieces of popcorn does Isabella have to eat?",
+  "cot_answer": 30.0,
+  "pot_answer": 20.0,
+  "final_answer": 210.0,
+  "method": "oracle_tiebreaker",
+  "oracle_called": true,
+  "reasoning": "\nHere's how we can solve this problem step-by-step:\n\n1. **Second 18 seconds:** 3 times the initial amount popped, so 20 * 3 = 60 kernels popped.\n\n2. **Third 18 seconds:** 4 times the initial rate, so 20 * 4 = 80 kernels popped.\n\n3. **Fourth 18 seconds:** Half the rate of the third 18 seconds, so 80 / 2 = 40 kernels popped.\n\n4. **Residual heat:** A quarter of the final 18 seconds' pops, so 40 / 4 = 10 kernels popped.\n\n5. **Total:** Add up the pops from each time period: 20 + 60 + 80 + 40 + 10 = 210 kernels.\n\nThe answer is 210.\n",
+  "self_consistency_log": {
+    "cot": {
+      "samples": [
+        {
+          "sample": 1,
+          "answer": 30.0,
+          "status": "success"
+        },
+        {
+          "sample": 2,
+          "answer": 210.0,
+          "status": "success"
+        },
+        {
+          "sample": 3,
+          "answer": 470.0,
+          "status": "success"
+        },
+        {
+          "sample": 4,
+          "answer": 380.0,
+          "status": "success"
+        },
+        {
+          "sample": 5,
+          "answer": 440.0,
+          "status": "success"
+        }
+      ],
+      "final_answer": 30.0,
+      "all_samples": [
+        30.0,
+        210.0,
+        470.0,
+        380.0,
+        440.0
+      ]
+    },
+    "pot": {
+      "samples": [
+        {
+          "sample": 1,
+          "answer": 96.66666666666666,
+          "status": "success"
+        },
+        {
+          "sample": 2,
+          "answer": 250.0,
+          "status": "success"
+        },
+        {
+          "sample": 3,
+          "answer": 20.0,
+          "status": "success"
+        },
+        {
+          "sample": 4,
+          "answer": 20.0,
+          "status": "success"
+        },
+        {
+          "sample": 5,
+          "answer": null,
+          "status": "execution_failed"
+        }
+      ],
+      "final_answer": 20.0,
+      "all_samples": [
+        96.66666666666666,
+        250.0,
+        20.0,
+        20.0,
+        null
+      ]
+    },
+    "oracle": {
+      "samples": [
+        {
+          "sample": 1,
+          "answer": 210.0,
+          "status": "used_reasoning"
+        },
+        {
+          "sample": 2,
+          "answer": 210.0,
+          "status": "used_reasoning"
+        },
+        {
+          "sample": 3,
+          "answer": 0.0,
+          "status": "used_reasoning"
+        },
+        {
+          "sample": 4,
+          "answer": 210.0,
+          "status": "used_reasoning"
+        },
+        {
+          "sample": 5,
+          "answer": 210.0,
+          "status": "used_reasoning"
+        }
+      ],
+      "final_answer": 210.0,
+      "all_samples": [
+        210.0,
+        210.0,
+        0.0,
+        210.0,
+        210.0
+      ],
+      "student_answers": {
+        "cot": 30.0,
+        "pot": 20.0
+      }
+    }
+  }
+}

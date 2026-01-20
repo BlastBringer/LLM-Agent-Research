@@ -8,3 +8,7 @@ __pycache__/
 .DS_Store
 scripts/demo
 scripts/test
+datasets/
+scripts/oldScripts
+scripts/PoT_testing
+Solver/

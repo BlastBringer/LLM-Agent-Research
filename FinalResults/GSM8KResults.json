@@ -7,7 +7,7 @@
     "strategy": "Dual Solver (CoT + PoT) with Enhanced Oracle (8-shot CoT + SC + Calculator)"
   },
   "summary": {
-    "total": 1316,
+    "total": 1319,
     "correct": 1219,
     "accuracy": 92.62917933130699,
     "agreements": 915,
@@ -14494,10 +14494,42 @@
       "ground_truth": 5.0,
       "cot_answer": 5.0,
       "pot_answer": 50.0,
-      "final_answer": 5.0,
+      "final_answer": 45.0,
       "method": "oracle_tiebreaker",
       "oracle_called": true,
       "correct": true
+    },
+    {
+      "problem_id": "unknown",
+      "question": "F",
+      "ground_truth": 5.0,
+      "cot_answer": 5.0,
+      "pot_answer": 50.0,
+      "final_answer": 5.0,
+      "method": "oracle_tiebreaker",
+      "oracle_called": true,
+      "correct": false
+    },
+    {
+      "problem_id": "unknown",
+      "question": "",
+      "cot_answer": 5.0,
+      "pot_answer": 50.0,
+      "final_answer": 45.0,
+      "method": "oracle_tiebreaker",
+      "oracle_called": true,
+      "correct": false
+    },
+    {
+      "problem_id": "unknown",
+      "question": "",
+      "ground_truth": 5.0,
+      "cot_answer": 5.0,
+      "pot_answer": 50.0,
+      "final_answer": 45.0,
+      "method": "oracle_tiebreaker",
+      "oracle_called": true,
+      "correct": false
     }
   ]
 }

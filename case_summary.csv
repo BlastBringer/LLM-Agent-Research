@@ -1,4 +1,0 @@
-Case Type,Count,Correct,Accuracy %,Oracle Used
-Agreement,915,868,94.86%,0
-Oracle Tiebreaker,400,351,87.75%,400
-CoT Only,1,0,0.00%,0
