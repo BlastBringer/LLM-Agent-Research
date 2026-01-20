@@ -1,236 +1,134 @@
-# 🧮 Word Problem Solver - LLM Agent Research
+# DSEO: Dual Solver + Enhanced Oracle (Self-Consistency)
 
-## 🚀 Quick Start
+`DSEO.py` is a **batch evaluation pipeline** for math/word-problem datasets that combines:
 
-```bash
-# Run with your own problem
-python3 main_pipeline.py "Bob has 10 marbles and Alice has 7. How many total?"
+- **Student model** solving with **self-consistency** via:
+  - CoT (Chain-of-Thought, natural language reasoning)
+  - PoT (Program-of-Thought, Python code generation + execution)
+- An **Oracle model** used only when needed:
+  - **8-shot CoT prompting**
+  - its own **self-consistency**
+  - optional “calculator” behavior (executes Python snippets if the model emits them)
 
-# Or run interactively
-python3 main_pipeline.py
-```
+The pipeline compares CoT vs PoT outputs:
 
-👉 **See [QUICKSTART.md](QUICKSTART.md) for detailed usage guide**
+- If CoT and PoT agree (numeric match), the student answer is accepted.
+- If they disagree (or both fail), the oracle is called.
 
----
-
-## 🎯 Project Overview
-
-A **modular pipeline** for solving mathematical word problems using Large Language Models (LLMs) via OpenRouter API.
-
-### 🏗️ Pipeline Architecture
-
-```
-Word Problem
-     ↓
-[Stage 1] Templatization ✅
-     ↓
-[Stage 2] Mathematical Parsing ✅
-     ↓
-[Stage 3] Agent Solving 🚧 TODO
-     ↓
-[Stage 4] Name Restoration 🚧 TODO
-     ↓
-Final Answer
-```
-
-### ✅ Completed Features
-
-#### 1. **Templatization Engine** (`Reasoning/templatizer.py`)
-Converts word problems with proper nouns into generic templates:
-- **Input**: "John has 5 apples and Mary has 3 oranges"
-- **Output**: "[Person1] has 5 apples and [Person2] has 3 oranges"
-- **Legend**: `{'[Person1]': 'John', '[Person2]': 'Mary'}`
-
-#### 2. **Mathematical Parser** (`Reasoning/parser.py`)
-Extracts mathematical structure from templatized problems:
-- Identifies equations needed
-- Finds target variable to solve
-- Classifies problem type (addition, rate, percentage, etc.)
-- LLM-powered with rule-based fallback
-
----
-
-## 📁 Project Structure
-
-```
-LLM-Agent-Research/
-├── main_pipeline.py          # 🚀 Main pipeline orchestrator
-├── .env                      # 🔑 API configuration
-├── requirements.txt          # 📦 Dependencies
-│
-├── Reasoning/               # 🧠 Core logic modules
-│   ├── templatizer.py       # ✅ Stage 1: Templatization
-│   └── parser.py            # ✅ Stage 2: Parsing
-│
-├── Agent/                   # 🤖 Agent solver (TODO)
-│   └── __init__.py
-│
-└── scripts/                 # 🧪 Testing & demos
-    ├── test/
-    │   ├── test_templatizer.py
-    │   └── test_parser.py
-    └── demo/
-        ├── demo_templatizer.py
-        └── demo_parser.py
-```
-
----
-
-## 📚 Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - Usage guide and examples
-- **[PROJECT_README.md](PROJECT_README.md)** - Detailed architecture
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Status report
-
-### ✨ Key Features
-
-#### 🔄 Templatization Engine (`Reasoning/templatizer.py`)
-- **Proper noun detection** using spaCy NLP + regex patterns + LangChain LLM
-- **Generic placeholder generation** ([Person1], [Item1], [Location1], etc.)
-- **Legend creation** for bidirectional mapping
-- **Mathematical structure preservation**
-- **Chain-of-thought processing** with confidence scoring
-- **Batch processing** capabilities
-
-#### 🎭 Demo & Testing
-- **Interactive demo** (`demo_templatizer.py`) - try your own problems
-- **Comprehensive test suite** (`test_templatizer.py`) - validation & edge cases
-- **Real-world examples** with various complexity levels
-
-### 🚀 Quick Start
-
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   python -m spacy download en_core_web_sm
-   ```
-
-2. **Run the demo**:
-   ```bash
-   python demo_templatizer.py
-   ```
-
-3. **Run tests**:
-   ```bash
-   python test_templatizer.py
-   ```
-
-4. **Use in code**:
-   ```python
-   from Reasoning.templatizer import templatize_word_problem
-   
-   result = templatize_word_problem("John has 5 apples...")
-   print(f"Template: {result.templated_problem}")
-   print(f"Legend: {result.legend}")
-   ```
-
-### 🎯 Scope & Strategy
-
-- **Focused scope**: Word problems only (not all mathematical problems)
-- **Proven methods**: Chain-of-Thought, boxed answers, systematic processing
-- **LangChain integration**: Core orchestration and enhanced NLP
-- **Modular architecture**: Separate components that work together
-
-### 📊 Current Status
-
-- ✅ **Templatization Engine**: Complete with NLP, patterns, and LLM enhancement
-- ✅ **Legend Management**: Bidirectional mapping for name restoration
-- ✅ **Testing Framework**: Comprehensive validation suite
-- ✅ **Demo System**: Interactive exploration of capabilities
-- 🔄 **Next**: Parsing engine (extracts mathematical structure)
-- 🔄 **Next**: Agent system (problem-solving orchestration)
-
-### 🧪 Example Transformations
-
-| Original Problem | Templatized Version | Entities Found |
-|------------------|-------------------|----------------|
-| "John has 5 apples and Mary has 3 oranges..." | "[Person1] has 5 apples and [Person2] has 3 oranges..." | Person: [John, Mary] |
-| "Sarah bought books from Amazon for $15..." | "[Person1] bought books from [Organization1] for $15..." | Person: [Sarah], Org: [Amazon] |
-| "At McDonald's, Mike ordered 2 Big Macs..." | "At [Organization1], [Person1] ordered 2 [Item1]..." | Person: [Mike], Org: [McDonald's], Item: [Big Macs] |
-
-### 🔮 Architecture Pipeline
-
-```
-Word Problem → [🔄 Templatization] → [📝 Parsing] → [🤖 Agent Solving] → [📊 Solution] → [🔄 Name Restoration] → Final Answer
-```
-
-Ready to build the complete mathematical reasoning pipeline! 🚀
+Outputs are written as a single JSON report with per-problem results and summary stats.
 
 
 ## Architecture
 
-<img src="architecture.jpg" alt="Alt text" width="500" height="300" style="border: 2px solid red; border-radius: 5px;">
+<img src="architecture-diagram.png" alt="DSEO architecture" width="700" style="border: 1px solid #ddd; border-radius: 6px;">
 
----
 
-## 🛡️ Risk Mitigation Features
+## Setup
 
-This pipeline includes comprehensive safeguards against common self-training risks:
+### 1) Install dependencies
 
-### **Implemented Mitigations:**
+This folder uses `requirements.txt`:
 
-1. **Distributional Drift Prevention** ✅
-   - Automatic difficulty scoring (0.0-1.0)
-   - Stratified train/validation splits
-   - See: `train_test_split.py`
+- LangChain client for OpenRouter (`langchain-openai`)
+- `.env` support (`python-dotenv`)
+- utilities used by other experiments (e.g., `sympy`, `spacy`, etc.)
 
-2. **Quality Assurance** ✅
-   - Automatic flagging for human review
-   - Exact symbolic verification (SymPy)
-   - No approximate numeric matching
+### 2) Configure OpenRouter access
 
-3. **Catastrophic Forgetting Prevention** ✅
-   - Separate train/test modes
-   - Validation set isolation
-   - Early stopping support
+`DSEO.py` loads environment variables via `python-dotenv` (`load_dotenv()`), so put your key in `LLM-Agent-Research/.env`.
 
-4. **Style Bias Mitigation** ⚠️ Partial
-   - Provenance metadata tracking
-   - Template randomization (optional)
+At minimum you need:
 
-5. **Spurious Heuristics Prevention** ✅
-   - Algebraic equivalence checking
-   - Strict verifier (no approximations)
+- `OPENAI_API_KEY` (OpenRouter API key)
 
-👉 **See [RISK_MITIGATION_GUIDE.md](RISK_MITIGATION_GUIDE.md) for complete details**
+Notes:
 
----
+- The code uses `base_url="https://openrouter.ai/api/v1"`.
+- The model IDs are OpenRouter model slugs.
 
-## 📊 Pipeline Modes
 
-### **TRAIN Mode** (Default)
-Collect Oracle solutions for fine-tuning:
-```bash
-python complete_pipeline.py --mode dataset --input data.jsonl --pipeline-mode train
-```
+## Input format
 
-### **TEST Mode**
-Evaluate apprentice without Oracle (prevents contamination):
-```bash
-python complete_pipeline.py --mode dataset --input validation.jsonl --pipeline-mode test
-```
+`DSEO.py` expects a **JSONL** file where each line is a JSON object.
 
-### **EVAL Mode**
-Compare apprentice vs oracle performance:
-```bash
-python complete_pipeline.py --mode dataset --input test.jsonl --pipeline-mode eval
-```
+For the problem text, it will look for (in this order):
 
----
+- `problem`
+- `input`
+- `question`
 
-## 🔄 Training Workflow
+For the ground-truth (only used for scoring correctness), it tries:
 
-```bash
-# 1. Collect training data
-python complete_pipeline.py --mode dataset --input AllProblemsCleaned.jsonl --pipeline-mode train
+- `answer`
+- `output`
+- `target`
 
-# 2. Split data (stratified by difficulty)
-python train_test_split.py --input solver_training_data.jsonl --val-split 0.2
+Ground-truth parsing is numeric-focused and includes best-effort handling for common LaTeX forms (e.g., `\boxed{}`, `\frac{a}{b}`).
 
-# 3. Fine-tune model (use solver_training_train.jsonl)
-# ... your fine-tuning script ...
 
-# 4. Evaluate on held-out set
-python complete_pipeline.py --mode dataset --input solver_training_val.jsonl --pipeline-mode test
-```
+## Running DSEO
+
+`DSEO.py` is intended to be run as a script.
+
+### Required arguments
+
+- `--input`: path to input JSONL
+- `--output`: path to output JSON
+
+### Common optional arguments
+
+- `--student-model` (default: `meta-llama/llama-3.2-3b-instruct`)
+- `--oracle-model` (default: `google/gemma-3-27b-it`)
+- `--max-problems` (limit dataset size)
+- `--workers` (threaded parallelism; default 10)
+- `--num-samples` (student self-consistency samples; default 5)
+- `--oracle-samples` (oracle self-consistency samples; default 5)
+- `--enable-sc-logging` (include detailed SC traces in output; default disabled)
+
+
+## Output format
+
+The output is a single JSON file with:
+
+- `config`: run configuration (models, sample counts, strategy string)
+- `summary`: aggregate metrics and method breakdown
+- `results`: per-problem records
+
+Each element of `results` includes:
+
+- `problem_id`, `question`
+- `ground_truth`
+- `cot_answer`, `pot_answer`, `final_answer`
+- `method`: one of
+  - `agreement`
+  - `oracle_tiebreaker`
+  - `cot_only`
+  - `pot_only`
+  - `oracle_fallback`
+  - `timeout` / `error` (if exceptions occur)
+- `oracle_called`: boolean
+- `correct`: numeric equality check with tolerance $10^{-6}$
+- `reasoning`: the selected reasoning text (CoT reasoning for agreement / CoT-only; oracle reasoning when oracle is used)
+
+If `--enable-sc-logging` is set, each result also contains:
+
+- `self_consistency_log.cot`
+- `self_consistency_log.pot`
+- `self_consistency_log.oracle`
+
+
+## Where this fits in the repo
+
+Within `LLM-Agent-Research/` you’ll see multiple solver variants and utilities:
+
+- `DSEO.py`: the main dual-solver + enhanced-oracle pipeline described here.
+- `scripts/dual_solver_oracle_cot_enhanced.py`: a closely related (and actively iterated) version of the same idea.
+- `scripts/bare_model_benchmark.py`: a minimal “bare model” baseline benchmark.
+- `scripts/download_svamp_dataset.py`: helper to export SVAMP-style JSONL.
+
+
+## Notes & gotchas
+
+- **Long runs / apparent hanging**: oracle calls can be slow. The LLM client uses `request_timeout` (student: 90s, oracle: 120s), and the outer evaluation loop also has stall detection (saves and cancels remaining work if there’s no progress for 300s).
+- **Threaded execution**: `--workers` controls concurrency. If you see rate limits or timeouts, reduce it.
+- **Numeric-only scoring**: correctness uses numeric extraction. Symbolic answers may not be scoreable.
